@@ -405,6 +405,27 @@ def test_codex_chatgpt_oauth_picks_chatgpt_target(fake_home: Path):
     assert info.suggested_target == "https://chatgpt.com/backend-api/codex"
 
 
+def test_codex_chatgpt_oauth_wins_over_stale_openai_api_key(fake_home: Path, monkeypatch):
+    """auth.json (the user's explicit ``codex login`` choice) must beat a
+    stale ``OPENAI_API_KEY`` env. Otherwise we'd pull ChatGPT-OAuth traffic
+    to api.openai.com and the upstream returns 401 Missing scopes."""
+    auth = fake_home / ".codex" / "auth.json"
+    auth.parent.mkdir(parents=True)
+    auth.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": {"id_token": "x"}}))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-stale-key-from-some-other-shell")
+    info = clients.get("codex").detect_auth()
+    assert info.mode == "oauth"
+    assert info.suggested_target == "https://chatgpt.com/backend-api/codex"
+
+
+def test_codex_env_used_when_no_auth_json(fake_home: Path, monkeypatch):
+    """No ``codex login`` ever run: env var is the only credential source."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-api-key")
+    info = clients.get("codex").detect_auth()
+    assert info.mode == "apikey"
+    assert info.suggested_target == "https://api.openai.com"
+
+
 def test_gemini_apikey_env(fake_home: Path, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-test")
     info = clients.get("gemini").detect_auth()

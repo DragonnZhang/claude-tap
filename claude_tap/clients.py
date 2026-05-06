@@ -206,13 +206,10 @@ def _codex_cli_args(proxy_url: str, env: Mapping[str, str]) -> list[str]:
 
 
 def _codex_auth() -> AuthInfo:
-    if os.environ.get("OPENAI_API_KEY"):
-        return AuthInfo(
-            logged_in=True,
-            mode="apikey",
-            detail="OPENAI_API_KEY env var",
-            suggested_target="https://api.openai.com",
-        )
+    """Match codex's own auth-priority: ``~/.codex/auth.json`` wins over
+    ``OPENAI_API_KEY`` env. A stale env var must not pull a ChatGPT-OAuth
+    user's traffic to ``api.openai.com`` (ChatGPT tokens fail there with
+    401 ``Missing scopes: api.responses.write``)."""
     auth = Path.home() / ".codex" / "auth.json"
     if auth.is_file():
         try:
@@ -234,6 +231,13 @@ def _codex_auth() -> AuthInfo:
                 detail="Codex stored API key",
                 suggested_target="https://api.openai.com",
             )
+    if os.environ.get("OPENAI_API_KEY"):
+        return AuthInfo(
+            logged_in=True,
+            mode="apikey",
+            detail="OPENAI_API_KEY env var",
+            suggested_target="https://api.openai.com",
+        )
     return AuthInfo(
         logged_in=False,
         mode="unknown",
