@@ -5,235 +5,181 @@
 [![Python version](https://img.shields.io/pypi/pyversions/claude-tap.svg)](https://pypi.org/project/claude-tap/)
 [![License](https://img.shields.io/github/license/liaohch3/claude-tap.svg)](https://github.com/liaohch3/claude-tap/blob/main/LICENSE)
 
-[中文文档](README_zh.md)
-
-Intercept and inspect all API traffic from [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex CLI](https://github.com/openai/codex). See exactly how they construct system prompts, manage conversation history, select tools, and use tokens — in a beautiful trace viewer.
-
-![Demo](docs/demo.gif)
-
-![Light Mode](docs/viewer-light.png)
-
-<details>
-<summary>Dark Mode / Diff View</summary>
-
-![Dark Mode](docs/viewer-dark.png)
-![Structural Diff](docs/diff-modal.png)
-![Character-level Diff](docs/billing-header-diff.png)
-
-</details>
+Intercept and inspect API traffic from [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex CLI](https://github.com/openai/codex). See exactly how they construct system prompts, manage history, select tools, and use tokens — in a self-contained HTML trace viewer.
 
 ## Install
 
-Requires Python 3.11+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (or [Codex CLI](https://github.com/openai/codex) for `--tap-client codex`).
+Requires Python 3.11+ and the client you want to trace (`claude` or `codex`).
 
 ```bash
-# Recommended
-uv tool install claude-tap
-
-# Or with pip
-pip install claude-tap
+uv tool install claude-tap        # recommended
+pip install claude-tap            # or pip
 ```
 
-Upgrade: `uv tool upgrade claude-tap` or `pip install --upgrade claude-tap`
+## CLI overview
+
+```
+claude-tap [global] <command> [opts] [-- args forwarded to the client]
+
+Commands
+  run [provider]   Trace a client and launch it (default if omitted)
+  proxy            Start the proxy alone (for external clients)
+  live             Open the real-time viewer against an existing trace tree
+  export FILE      Render a trace JSONL as markdown / json / html
+  update           Check for, and optionally install, a new release
+  ca {path,...}    Manage the local TLS CA used by forward mode
+
+Global options
+  -v, -vv          Increase verbosity (INFO, DEBUG)
+  -q, --quiet      Suppress non-error output
+  -V, --version    Show version
+      --no-color   Disable ANSI colors (also honors NO_COLOR)
+      --json       Emit JSON status to stdout where supported
+```
+
+A standalone `--` separates `claude-tap`'s own flags from arguments forwarded to the launched client. The first form below means "trace `claude` with the live viewer, and pass `--model …` to `claude`":
+
+```bash
+claude-tap -L -- --model claude-opus-4-6
+```
+
+If no subcommand is given, `run` is implied — so `claude-tap` and `claude-tap run` are the same.
 
 ## Usage
 
 ### Claude Code
 
 ```bash
-# Basic — launch Claude Code with tracing
-claude-tap
-
-# Live mode — watch API calls in real-time in browser
-claude-tap --tap-live
-
-# Pass any flags through to Claude Code
-claude-tap -- --model claude-opus-4-6
-claude-tap -c    # continue last conversation
-
-# Skip all permission prompts (auto-accept tool calls)
-claude-tap -- --dangerously-skip-permissions
-
-# Full-power combo: live viewer + skip permissions + specific model
-claude-tap --tap-live -- --dangerously-skip-permissions --model claude-sonnet-4-6
+claude-tap                                       # trace with defaults
+claude-tap -L                                    # + live viewer in browser
+claude-tap -- --model claude-opus-4-6            # forward args
+claude-tap -- -c                                 # continue last conversation
+claude-tap -L -- --dangerously-skip-permissions  # full-power combo
 ```
 
 ### Codex CLI
 
-Codex CLI supports two authentication modes with different upstream targets:
+Codex supports two auth modes with different upstream targets:
 
-| Auth Mode | How to authenticate | Upstream target | Notes |
-|-----------|-------------------|-----------------|-------|
-| **OAuth** (ChatGPT subscription) | `codex login` | `https://chatgpt.com/backend-api/codex` | Default for ChatGPT Plus/Pro/Team users |
-| **API Key** | Set `OPENAI_API_KEY` | `https://api.openai.com` (default) | Pay-per-use via OpenAI Platform |
+| Auth mode | How to authenticate | Upstream target |
+|-----------|--------------------|-----------------|
+| OAuth (ChatGPT subscription) | `codex login`           | `https://chatgpt.com/backend-api/codex` |
+| API key                      | `OPENAI_API_KEY=...`    | `https://api.openai.com` (default)      |
 
 ```bash
-# OAuth users (ChatGPT Plus/Pro/Team) — must specify target
-claude-tap --tap-client codex --tap-target https://chatgpt.com/backend-api/codex
+# OAuth users (must specify target)
+claude-tap codex -t https://chatgpt.com/backend-api/codex
 
-# API Key users — default target works out of the box
-claude-tap --tap-client codex
+# API key users (target works out of the box)
+claude-tap codex
 
-# With specific model
-claude-tap --tap-client codex -- --model codex-mini-latest
-
-# Full auto-approval (skip all permission prompts)
-claude-tap --tap-client codex -- --full-auto
-
-# OAuth + full auto + live viewer
-claude-tap --tap-client codex --tap-target https://chatgpt.com/backend-api/codex --tap-live -- --full-auto
+# With model and full auto-approval
+claude-tap codex -- --model codex-mini-latest --full-auto
 ```
 
-### Browser Preview
+### Standalone proxy
+
+Start the proxy without launching a client and connect from another terminal:
 
 ```bash
-# Disable auto-open of HTML viewer after exit (on by default)
-claude-tap --tap-no-open
-
-# Live mode — real-time viewer opens in browser while client runs
-claude-tap --tap-live
-claude-tap --tap-live --tap-live-port 3000    # fixed port for live viewer
-```
-
-When the client exits, you can also manually open the generated viewer:
-
-```bash
-open .traces/trace_*.html
-```
-
-### Proxy-Only Mode
-
-Start the proxy without launching a client — useful for custom setups or connecting from a separate terminal:
-
-```bash
-# Claude Code
-claude-tap --tap-no-launch --tap-port 8080
+claude-tap proxy -p 8080
 # In another terminal:
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 claude
-
-# Codex CLI (OAuth)
-claude-tap --tap-client codex --tap-target https://chatgpt.com/backend-api/codex --tap-no-launch --tap-port 8080
-# In another terminal:
-OPENAI_BASE_URL=http://127.0.0.1:8080/v1 codex
-
-# Codex CLI (API Key)
-claude-tap --tap-client codex --tap-no-launch --tap-port 8080
-# In another terminal:
-OPENAI_BASE_URL=http://127.0.0.1:8080/v1 codex
 ```
 
-### Common Combos
+For Codex:
 
 ```bash
-# Trace Claude Code with live viewer and auto-accept
-claude-tap --tap-live -- --dangerously-skip-permissions
-
-# Trace Codex (OAuth) with live viewer and full auto
-claude-tap --tap-client codex --tap-target https://chatgpt.com/backend-api/codex --tap-live -- --full-auto
-
-# Save traces to a custom directory
-claude-tap --tap-output-dir ./my-traces
-
-# Keep only the last 10 trace sessions
-claude-tap --tap-max-traces 10
+claude-tap proxy --provider codex -t https://chatgpt.com/backend-api/codex -p 8080
+# Then:
+OPENAI_BASE_URL=http://127.0.0.1:8080/v1 codex
 ```
 
-### CLI Options
+### Live viewer (history)
 
-All flags are forwarded to the selected client, except these `--tap-*` ones:
-
-```
---tap-client CLIENT      Client to launch: claude (default) or codex
---tap-target URL         Upstream API URL (default: auto per client)
---tap-live               Start real-time viewer (auto-opens browser)
---tap-live-port PORT     Port for live viewer server (default: auto)
---tap-no-open            Don't auto-open HTML viewer after exit (on by default)
---tap-output-dir DIR     Trace output directory (default: ./.traces)
---tap-port PORT          Proxy port (default: auto)
---tap-host HOST          Bind address (default: 127.0.0.1, or 0.0.0.0 in --tap-no-launch mode)
---tap-no-launch          Only start the proxy, don't launch client
---tap-max-traces N       Max trace sessions to keep (default: 50, 0 = unlimited)
---tap-no-update-check    Disable PyPI update check on startup
---tap-no-auto-update     Check for updates but don't auto-download
---tap-proxy-mode MODE    Proxy mode: reverse (default) or forward
+```bash
+claude-tap live                  # browse historic traces in browser
+claude-tap live -p 3000          # fixed port
 ```
 
-## Viewer Features
+### Export
 
-The viewer is a single self-contained HTML file (zero external dependencies):
+```bash
+claude-tap export trace.jsonl                  # markdown to stdout
+claude-tap export trace.jsonl -o out.md        # markdown to file
+claude-tap export trace.jsonl --format json
+claude-tap export trace.jsonl --format html    # standalone HTML viewer
+claude-tap export -                            # read JSONL from stdin
+```
 
-- **Structural diff** — compare consecutive requests to see exactly what changed: new/removed messages, system prompt diffs, character-level inline highlighting
-- **Path filtering** — filter by API endpoint (e.g., `/v1/messages` only)
-- **Model grouping** — sidebar groups requests by model (Opus > Sonnet > Haiku)
-- **Token usage breakdown** — input / output / cache read / cache creation
-- **Tool inspector** — expandable cards with tool name, description, and parameter schema
-- **Search** — full-text search across messages, tools, prompts, and responses
-- **Dark mode** — toggle light/dark themes (respects system preference)
-- **Keyboard navigation** — `j`/`k` or arrow keys
-- **Copy helpers** — one-click copy of request JSON or cURL command
-- **i18n** — English, 简体中文, 日本語, 한국어, Français, العربية, Deutsch, Русский
+### Updates
+
+`run` / `proxy` print a hint when a newer version is on PyPI but never modify the install on their own. Upgrading is opt-in:
+
+```bash
+claude-tap update            # check + print
+claude-tap update --install  # install via uv or pip (auto-detected)
+```
+
+### Local TLS CA (forward mode)
+
+Forward mode terminates TLS so it can read encrypted traffic; that requires a CA the client trusts:
+
+```bash
+claude-tap ca path           # print the CA cert path
+claude-tap ca install        # show platform-specific trust instructions
+claude-tap ca regen          # regenerate the CA
+```
+
+The CA lives under `XDG_DATA_HOME/claude-tap` (Linux) or the platform equivalent.
 
 ## Architecture
 
-![Architecture](docs/architecture.png)
+```
+                              EventBus
+                              /  |  \
+                             /   |   \
+                  JsonlSink   StatsSink   LiveSink
+                                              \
+                                               +-- LiveViewerServer (SSE)
 
-**How it works:**
-
-1. `claude-tap` starts a reverse proxy and spawns the selected client (`claude` or `codex`) with the provider-specific base URL pointing to it
-2. All API requests flow through the proxy → upstream API → back through proxy
-3. SSE streaming responses are forwarded in real-time (zero added latency)
-4. Each request-response pair is recorded to `trace.jsonl`
-5. On exit, a self-contained HTML viewer is generated
-6. Live mode (optional) broadcasts updates to browser via SSE
-
-**Key features:** 🔒 API keys auto-redacted · ⚡ Zero latency · 📦 Self-contained viewer · 🔄 Real-time live mode
-
-## Contributor Legibility Checks
-
-Run deterministic legibility checks locally:
-
-```bash
-uv run python scripts/check_legibility.py
+  client  --HTTP/WS-->  ReverseProxy  --HTTPS-->  upstream API
+                  or
+  client  --CONNECT-->  ForwardProxy  --HTTPS-->  upstream API
+                       (TLS termination)
 ```
 
-Strict freshness mode (promotes stale standards metadata to failures):
+The proxy never knows about file writers or live viewers — every record is published through an `EventBus` that any number of sinks can subscribe to. Adding a new sink (webhook, Prometheus exporter, …) is one file.
+
+Provider-specific logic (path rewrites, allowed paths, streaming protocol, usage extraction) lives in `claude_tap.providers`. Adding a new provider — e.g. Gemini — is one file: implement a `Provider` and register it.
+
+## Development
 
 ```bash
-uv run python scripts/check_legibility.py --strict-freshness
-```
-
-## PR Merge-Readiness Check
-
-Run a concise merge-readiness report for a pull request:
-
-```bash
-scripts/check_pr.sh <pr_number>
-```
-
-Options:
-
-```bash
-# Use an explicit repo instead of current checkout
-scripts/check_pr.sh <pr_number> --repo owner/repo
-
-# Skip local gates (CI/metadata only)
-scripts/check_pr.sh <pr_number> --no-tests
-```
-
-The script prints:
-
-- PR metadata (title, state, draft flag, merge state, head/base branch)
-- CI checks summary (`pass` / `fail` / `pending` counts)
-- Local gate results (unless `--no-tests`)
-- Final verdict line: `VERDICT: READY ...` or `VERDICT: NOT_READY ...`
-
-Local gates executed by default:
-
-```bash
+uv sync --extra dev
 uv run ruff check .
 uv run ruff format --check .
-uv run pytest tests/ -x --timeout=60
+uv run pytest tests/
 ```
+
+The test suite is organised so that:
+
+| File                                | Catches                                                  |
+|-------------------------------------|----------------------------------------------------------|
+| `test_providers.py`                 | Provider registry, OAuth vs API-key path-strip rules     |
+| `test_pipeline.py`                  | Header filtering, redaction, decompression, record shape |
+| `test_sse.py`                       | SSE parsing across chunk boundaries; reassembler state   |
+| `test_manifest.py`                  | Trace cleanup, legacy `.cloudtap-*` migration            |
+| `test_viewer.py`                    | Marker injection, lazy mode threshold, `</script>` escape |
+| `test_cli_parsing.py`               | Subcommand dispatch, `--` forwarding, defaults           |
+| `test_update.py`                    | Version comparison, installer detection                  |
+| `test_logging_setup.py`             | Verbosity → level mapping, no root-logger pollution      |
+| `test_export.py`                    | Markdown / JSON / HTML export shape                      |
+| `test_e2e_reverse_proxy.py`         | Full proxy flow against a mock upstream (incl. SSE)      |
+| `test_e2e_live_viewer.py`           | Live SSE delivery to an HTTP client                      |
+| `test_e2e_cli.py`                   | `python -m claude_tap …` end-to-end                      |
+
+Unit tests run in under 2 seconds; the whole suite (including e2e) finishes in well under 5.
 
 ## License
 

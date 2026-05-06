@@ -1,7 +1,7 @@
 [project]
 name = "claude-tap"
-version = "0.1.25"
-description = "Trace Claude Code API requests via a local reverse proxy. Inspect system prompts, messages, tools, and token usage."
+version = "0.2.0"
+description = "Trace Claude Code / Codex CLI API traffic through a local proxy. Inspect prompts, tools, streaming, and token usage."
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "liaohch3" }]
@@ -30,7 +30,7 @@ Repository = "https://github.com/liaohch3/claude-tap"
 Issues = "https://github.com/liaohch3/claude-tap/issues"
 
 [project.scripts]
-claude-tap = "claude_tap.cli:main_entry"
+claude-tap = "claude_tap.cli:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]
@@ -47,7 +47,6 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-timeout>=2.3",
-    "pexpect>=4.9",
     "ruff>=0.11",
 ]
 
@@ -91,6 +90,4 @@ exclude_lines = [
 show_missing = true
 
 [dependency-groups]
-dev = [
-    "playwright>=1.58.0",
-]
+dev = []

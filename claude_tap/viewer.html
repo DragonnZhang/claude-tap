@@ -626,7 +626,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 }
 .search-bar .search-clear:hover { color: var(--text); }
 
-/* ─── Global find (Cmd/Ctrl+F) ─── */
+/* ─── Global find (Cmd/Ctrl+K) ─── */
 .global-search-overlay {
   position: fixed;
   top: 14px;
@@ -1082,9 +1082,9 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
     </div>
   </div>
   <div id="sidebar-wrap" style="display:none;display:flex;flex-direction:column">
-    <div id="date-picker" style="display:none;padding:6px 12px;border-bottom:1px solid var(--border);font-size:13px;align-items:center;gap:8px;">
-      <label style="color:var(--text-secondary);white-space:nowrap;">Date:</label>
-      <select id="date-select" onchange="onDateChange(this.value)" style="flex:1;padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text);font-size:13px;cursor:pointer;"></select>
+    <div id="session-picker" style="display:none;padding:6px 12px;border-bottom:1px solid var(--border);font-size:13px;align-items:center;gap:8px;">
+      <label style="color:var(--text-secondary);white-space:nowrap;">Session:</label>
+      <select id="session-select" onchange="onSessionChange(this.value)" style="flex:1;padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text);font-size:13px;cursor:pointer;"></select>
     </div>
     <div class="search-bar" id="search-bar">
       <span class="search-icon">&#128269;</span>
@@ -1107,6 +1107,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   <div class="detail" id="detail" style="display:none"></div>
 </div>
 
+<!-- claude-tap:inject -->
 <script>
 const $ = s => document.querySelector(s);
 let entries = [], filtered = [], activeIdx = -1, activePaths = new Set(), searchQuery = '', activeTools = null;
@@ -1477,128 +1478,212 @@ function initLang() {
   $('#lang-select').value = currentLang;
   updateStaticTexts();
 }
-/* ─── Live Mode SSE Support ─── */
-let liveEventSource = null;
-let liveConnected = false;
-let currentDetailRequestId = null;
-let liveRecords = [];
-let viewingDate = null; // null = live, string = historical date
+/* ===========================================================================
+   SECTION: Live mode
+
+   When the page is served by `claude-tap proxy --live` / `claude-tap live`,
+   the proxy injects:
+       LIVE_MODE = true
+       LIVE_SCHEMA = <int>            (protocol version we expect)
+       CURRENT_SESSION_ID = "YYYY-MM-DD/HHMMSS" | null
+
+   We talk to:
+       GET /api/sessions              list sessions (history + current)
+       GET /api/sessions/{id}         records of a single session
+       GET /api/stream                SSE: hello | record | heartbeat
+
+   The page is always *viewing one session*. Switching to a historical
+   session does not close the SSE stream; new records arriving for the
+   live session are counted as "pending" until the user switches back.
+   ========================================================================= */
+
+let liveStreamSource = null;
+let liveCurrentSessionId = null;     // server-reported current session
+let viewingSessionId = null;         // session currently shown in the UI
+let pendingNewCount = 0;             // records arrived while viewing history
 let liveRenderTimer = null;
-const liveSeenIds = new Set();
 
-function initLiveMode() {
-  const statusEl = $('#live-status');
-  statusEl.style.display = 'flex';
+async function bootstrapLive() {
+  if (typeof CURRENT_SESSION_ID !== 'undefined' && CURRENT_SESSION_ID) {
+    liveCurrentSessionId = CURRENT_SESSION_ID;
+    viewingSessionId = CURRENT_SESSION_ID;
+  }
   updateLiveStatus('connecting');
-
-  liveEventSource = new EventSource('/events');
-
-  liveEventSource.onopen = () => {
-    liveConnected = true;
-    updateLiveStatus('connected', liveRecords.length);
-  };
-
-  liveEventSource.onmessage = (event) => {
-    try {
-      const record = JSON.parse(event.data);
-      // Deduplicate: SSE replays full history on each reconnect
-      const id = record.request_id || record.req_id;
-      if (id && liveSeenIds.has(id)) return;
-      if (id) liveSeenIds.add(id);
-
-      liveRecords.push(record);
-      if (!viewingDate) {
-        entries.push(record);
-        updateLiveStatus('connected', entries.length);
-        clearTimeout(liveRenderTimer);
-        liveRenderTimer = setTimeout(() => renderApp(true), 50);
-      }
-    } catch (e) {
-      console.error('Failed to parse SSE data:', e);
-    }
-  };
-
-  // EventSource auto-reconnects on transient errors;
-  // only update status indicator here.
-  liveEventSource.onerror = () => {
-    liveConnected = false;
-    updateLiveStatus('disconnected');
-  };
+  await fetchSessions();
+  if (viewingSessionId) {
+    await loadSessionRecords(viewingSessionId);
+  } else {
+    showWaitingPlaceholder();
+  }
+  openLiveStream();
 }
 
-function updateLiveStatus(status, count) {
-  const el = $('#live-status');
-  if (!el) return;
-  const colors = {
-    connecting: { bg: 'var(--amber-bg)', color: 'var(--amber)', dot: 'var(--amber)' },
-    connected: { bg: 'var(--green-bg)', color: 'var(--green)', dot: 'var(--green)' },
-    disconnected: { bg: 'var(--red-bg)', color: 'var(--red)', dot: 'var(--red)' }
-  };
-  const c = colors[status] || colors.connecting;
-  const labels = { connecting: 'Connecting...', connected: 'Live', disconnected: 'Disconnected' };
-  const countText = count !== undefined ? ` (${count})` : '';
-  el.style.background = c.bg;
-  el.style.color = c.color;
-  el.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:${c.dot};${status === 'connected' ? 'animation:pulse 2s infinite;' : ''}"></span>${labels[status]}${countText}`;
+function showWaitingPlaceholder() {
+  $('#drop-zone').innerHTML =
+    '<div style="text-align:center;padding:60px 20px;">' +
+    '<div style="font-size:48px;margin-bottom:16px;">📡</div>' +
+    '<h2 style="margin-bottom:8px;">Waiting for API calls...</h2>' +
+    '<p style="color:var(--text-secondary);">Use Claude Code or Codex CLI to see traces appear here in real time.</p>' +
+    '</div>';
 }
 
-async function fetchDates() {
+async function fetchSessions() {
   try {
-    const resp = await fetch('/api/dates');
-    const data = await resp.json();
-    const sel = $('#date-select');
-    if (!sel || !data.dates) return;
-    sel.innerHTML = '<option value="live">Live (current session)</option>';
-    for (const d of data.dates) {
-      sel.insertAdjacentHTML('beforeend', `<option value="${d}">${d}</option>`);
-    }
-    if (data.has_legacy) {
-      sel.insertAdjacentHTML('beforeend', '<option value="legacy">Legacy (flat)</option>');
-    }
-    const picker = $('#date-picker');
-    if (picker) picker.style.display = 'flex';
+    const r = await fetch('/api/sessions');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (data.current) liveCurrentSessionId = data.current;
+    populateSessionPicker(data.sessions || []);
   } catch (e) {
-    console.error('Failed to fetch dates:', e);
+    console.error('fetchSessions failed:', e);
   }
 }
 
-async function onDateChange(value) {
-  if (value === 'live') {
-    viewingDate = null;
-    entries = liveRecords.slice();
-    renderApp(true);
-    return;
+function populateSessionPicker(sessions) {
+  const sel = $('#session-select');
+  if (!sel) return;
+  sel.innerHTML = '';
+  // Group sessions by date so the picker reads naturally (newest first).
+  const byDate = new Map();
+  for (const s of sessions) {
+    if (!byDate.has(s.date)) byDate.set(s.date, []);
+    byDate.get(s.date).push(s);
   }
-  viewingDate = value;
+  for (const [date, list] of byDate) {
+    const og = document.createElement('optgroup');
+    og.label = date;
+    for (const s of list) {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      const t = s.id.split('/')[1] || '';
+      const time = `${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)}`;
+      const isLive = s.id === liveCurrentSessionId;
+      opt.textContent = `${time} · ${s.record_count} record${s.record_count === 1 ? '' : 's'}${isLive ? ' · live' : ''}`;
+      if (s.id === viewingSessionId) opt.selected = true;
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
+  }
+  const picker = $('#session-picker');
+  if (picker) picker.style.display = 'flex';
+}
+
+async function loadSessionRecords(sessionId) {
   try {
-    const resp = await fetch('/api/traces/' + encodeURIComponent(value));
-    entries = await resp.json();
+    const r = await fetch('/api/sessions/' + sessionId);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    entries = data.records || [];
+    activeIdx = -1;
     renderApp();
+    autoSelectFirst();
+    updateLiveStatus();
   } catch (e) {
-    console.error('Failed to load traces for date:', value, e);
+    console.error('loadSessionRecords failed:', e);
   }
 }
 
-if (typeof LIVE_MODE !== 'undefined' && LIVE_MODE) {
-  entries = typeof EMBEDDED_TRACE_DATA !== 'undefined' ? EMBEDDED_TRACE_DATA : [];
-  document.addEventListener('DOMContentLoaded', () => {
-    initTheme(); initLang(); initGlobalSearch();
-    initLiveMode();
-    fetchDates();
-    if (entries.length) renderApp();
-    else {
-      // Show waiting state
-      $('#drop-zone').innerHTML = '<div style="text-align:center;padding:60px 20px;"><div style="font-size:48px;margin-bottom:16px;">📡</div><h2 style="margin-bottom:8px;">Waiting for API calls...</h2><p style="color:var(--text-secondary);">Start using Claude Code to see traces here in real-time</p></div>';
+async function onSessionChange(id) {
+  viewingSessionId = id;
+  pendingNewCount = 0;
+  await loadSessionRecords(id);
+}
+
+function openLiveStream() {
+  liveStreamSource = new EventSource('/api/stream');
+  liveStreamSource.addEventListener('hello', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.session) {
+        liveCurrentSessionId = data.session;
+        if (!viewingSessionId) {
+          viewingSessionId = data.session;
+          loadSessionRecords(data.session);
+        }
+      }
+      if (data.schema && typeof LIVE_SCHEMA !== 'undefined' && data.schema !== LIVE_SCHEMA) {
+        console.warn(`viewer/server schema mismatch (page=${LIVE_SCHEMA}, server=${data.schema}); refresh recommended`);
+      }
+    } catch (_) {}
+    updateLiveStatus('connected');
+  });
+  liveStreamSource.addEventListener('record', e => {
+    let record;
+    try { record = JSON.parse(e.data); } catch (_) { return; }
+    if (viewingSessionId === liveCurrentSessionId) {
+      entries.push(record);
+      clearTimeout(liveRenderTimer);
+      // Coalesce a burst of records into one render.
+      liveRenderTimer = setTimeout(() => renderApp(true), 50);
+    } else {
+      pendingNewCount++;
+      updateLiveStatus('connected');
     }
   });
+  liveStreamSource.addEventListener('heartbeat', () => {
+    updateLiveStatus('connected');
+  });
+  liveStreamSource.onopen = () => updateLiveStatus('connected');
+  liveStreamSource.onerror = () => updateLiveStatus('disconnected');
+}
+
+function updateLiveStatus(forcedStatus) {
+  const el = $('#live-status');
+  if (!el) return;
+  el.style.display = 'flex';
+  const status = forcedStatus
+    || (liveStreamSource && liveStreamSource.readyState === 1 ? 'connected' : 'disconnected');
+  const colors = {
+    connecting:   { bg: 'var(--amber-bg)', color: 'var(--amber)', dot: 'var(--amber)' },
+    connected:    { bg: 'var(--green-bg)', color: 'var(--green)', dot: 'var(--green)' },
+    disconnected: { bg: 'var(--red-bg)', color: 'var(--red)', dot: 'var(--red)' },
+  };
+  const c = colors[status] || colors.connecting;
+  let label;
+  if (status === 'connected') {
+    const isLive = viewingSessionId === liveCurrentSessionId;
+    label = isLive
+      ? `Live · ${entries.length}`
+      : (pendingNewCount > 0 ? `Live elsewhere · +${pendingNewCount}` : 'Live (history view)');
+  } else {
+    label = status === 'connecting' ? 'Connecting…' : 'Disconnected';
+  }
+  const dotStyle = `width:6px;height:6px;border-radius:50%;background:${c.dot};${status === 'connected' ? 'animation:pulse 2s infinite;' : ''}`;
+  el.style.background = c.bg;
+  el.style.color = c.color;
+  el.innerHTML = `<span style="${dotStyle}"></span>${label}`;
+}
+
+/* ===========================================================================
+   SECTION: Bootstrap
+
+   Four mutually exclusive entry points decide where ``entries`` come from:
+     1. LIVE_MODE        → fetch from /api/* and stream new records
+     2. EMBEDDED_TRACE_META  → static export, large trace, lazy parse
+     3. EMBEDDED_TRACE_DATA  → static export, small trace, fully inline
+     4. None of the above → user opened the HTML directly; show drop zone
+   ========================================================================= */
+
+if (typeof LIVE_MODE !== 'undefined' && LIVE_MODE) {
+  document.addEventListener('DOMContentLoaded', () => {
+    initTheme(); initLang(); initGlobalSearch();
+    bootstrapLive();
+  });
 } else if (typeof EMBEDDED_TRACE_META !== 'undefined' && EMBEDDED_TRACE_META.length) {
-  // Lazy mode: build stub entries from metadata
   lazyMode = true;
   entries = EMBEDDED_TRACE_META.map((meta, i) => buildStubEntry(meta, i));
-  document.addEventListener('DOMContentLoaded', () => { initTheme(); initLang(); initGlobalSearch(); renderApp(); });
+  document.addEventListener('DOMContentLoaded', () => {
+    initTheme(); initLang(); initGlobalSearch();
+    renderApp();
+    autoSelectFirst();
+  });
 } else if (typeof EMBEDDED_TRACE_DATA !== 'undefined' && EMBEDDED_TRACE_DATA.length) {
   entries = EMBEDDED_TRACE_DATA;
-  document.addEventListener('DOMContentLoaded', () => { initTheme(); initLang(); initGlobalSearch(); renderApp(); });
+  document.addEventListener('DOMContentLoaded', () => {
+    initTheme(); initLang(); initGlobalSearch();
+    renderApp();
+    autoSelectFirst();
+  });
 } else {
   document.addEventListener('DOMContentLoaded', () => {
     initTheme(); initLang(); initGlobalSearch();
@@ -1615,9 +1700,17 @@ function loadFile(file) {
   reader.onload = () => {
     entries = reader.result.trim().split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
     if (!entries.length) { alert('No valid entries found / 未找到有效条目'); return; }
+    activeIdx = -1;
     renderApp();
+    autoSelectFirst();
   };
   reader.readAsText(file);
+}
+
+/* On first paint, auto-select the first entry so the detail panel never
+ * shows up empty. We skip this if the user has already picked something. */
+function autoSelectFirst() {
+  if (activeIdx < 0 && filtered.length > 0) selectEntry(0);
 }
 
 /* ─── Path & filter ─── */
@@ -1916,7 +2009,7 @@ function matchSearch(e, q) {
   return false;
 }
 
-/* ─── Global search (Cmd/Ctrl+F) ─── */
+/* ─── Global search (Cmd/Ctrl+K) ─── */
 function initGlobalSearch() {
   const input = $('#global-search-input');
   $('#global-search-prev').onclick = () => navigateGlobalSearch(-1);
@@ -3381,9 +3474,13 @@ function esc(s) { if (!s) return ''; return String(s).replace(/&/g, '&amp;').rep
 function fmtDuration(ms) { return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's'; }
 function fmtChars(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
 
-/* ─── Keyboard nav ─── */
+/* ─── Keyboard nav ───
+ * Cmd/Ctrl+K opens the in-app global search. We intentionally DO NOT
+ * hijack Cmd/Ctrl+F: that key remains the browser's own page-find, which
+ * is what users hit by reflex.
+ */
 document.addEventListener('keydown', ev => {
-  if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'f') {
+  if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') {
     ev.preventDefault();
     openGlobalSearch();
     return;

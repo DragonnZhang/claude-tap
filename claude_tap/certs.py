@@ -1,16 +1,17 @@
-"""CA and per-host certificate generation for forward proxy TLS termination.
+"""Local CA + per-host certificate generation for forward-mode TLS termination.
 
-Generates a self-signed CA on first run and creates per-host certificates
-signed by that CA. The CA cert/key are persisted to disk so they survive
-restarts; host certs are cached in memory for the lifetime of the process.
+The CA is created once on first use of ``forward`` mode and cached on disk
+under :func:`claude_tap.paths.data_dir`. Per-host leaf certs are kept in
+process memory.
 """
 
 from __future__ import annotations
 
-import datetime
+import datetime as _dt
 import ipaddress
 import logging
 import ssl
+import tempfile
 from pathlib import Path
 
 from cryptography import x509
@@ -18,14 +19,11 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-log = logging.getLogger("claude-tap")
+from claude_tap.paths import data_dir, legacy_data_dir
 
-# Default directory for CA files
-_DEFAULT_CA_DIR = Path.home() / ".claude-tap"
+log = logging.getLogger("claude_tap")
 
-# CA validity: 5 years
 _CA_VALIDITY_DAYS = 5 * 365
-# Host cert validity: 1 year
 _HOST_VALIDITY_DAYS = 365
 
 
@@ -34,25 +32,41 @@ def _generate_key() -> rsa.RSAPrivateKey:
 
 
 def ensure_ca(ca_dir: Path | None = None) -> tuple[Path, Path]:
-    """Ensure a CA certificate and key exist on disk.
+    """Return ``(cert_path, key_path)``, creating the CA if needed.
 
-    Returns (ca_cert_path, ca_key_path). Creates them if they don't exist.
+    For backwards compatibility, if no CA exists at the new XDG-style path but
+    one exists at the legacy ``~/.claude-tap`` location, we reuse it instead
+    of generating a fresh one (which would force users to re-trust).
     """
-    ca_dir = ca_dir or _DEFAULT_CA_DIR
-    ca_dir.mkdir(parents=True, exist_ok=True)
 
-    ca_cert_path = ca_dir / "ca.pem"
-    ca_key_path = ca_dir / "ca-key.pem"
+    target = ca_dir or data_dir()
+    target.mkdir(parents=True, exist_ok=True)
 
-    if ca_cert_path.exists() and ca_key_path.exists():
-        # Validate existing files are loadable
+    cert_path = target / "ca.pem"
+    key_path = target / "ca-key.pem"
+
+    if cert_path.exists() and key_path.exists():
         try:
-            _load_ca(ca_cert_path, ca_key_path)
-            return ca_cert_path, ca_key_path
+            _load_ca(cert_path, key_path)
+            return cert_path, key_path
         except Exception:
-            log.warning("Existing CA files are invalid, regenerating")
+            log.warning("existing CA at %s is invalid; regenerating", target)
 
-    log.info(f"Generating new CA certificate in {ca_dir}")
+    legacy = legacy_data_dir()
+    legacy_cert = legacy / "ca.pem"
+    legacy_key = legacy / "ca-key.pem"
+    if ca_dir is None and legacy_cert.exists() and legacy_key.exists():
+        try:
+            _load_ca(legacy_cert, legacy_key)
+            cert_path.write_bytes(legacy_cert.read_bytes())
+            key_path.write_bytes(legacy_key.read_bytes())
+            key_path.chmod(0o600)
+            log.info("migrated CA from %s to %s", legacy, target)
+            return cert_path, key_path
+        except Exception:
+            pass
+
+    log.info("generating new CA in %s", target)
     key = _generate_key()
     name = x509.Name(
         [
@@ -60,8 +74,7 @@ def ensure_ca(ca_dir: Path | None = None) -> tuple[Path, Path]:
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "claude-tap"),
         ]
     )
-
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = _dt.datetime.now(_dt.timezone.utc)
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)
@@ -69,7 +82,7 @@ def ensure_ca(ca_dir: Path | None = None) -> tuple[Path, Path]:
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
-        .not_valid_after(now + datetime.timedelta(days=_CA_VALIDITY_DAYS))
+        .not_valid_after(now + _dt.timedelta(days=_CA_VALIDITY_DAYS))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(
             x509.KeyUsage(
@@ -85,98 +98,67 @@ def ensure_ca(ca_dir: Path | None = None) -> tuple[Path, Path]:
             ),
             critical=True,
         )
-        .add_extension(
-            x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
-            critical=False,
-        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
         .sign(key, hashes.SHA256())
     )
 
-    ca_key_path.write_bytes(
+    key_path.write_bytes(
         key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.TraditionalOpenSSL,
             encryption_algorithm=serialization.NoEncryption(),
         )
     )
-    # Restrict key file permissions
-    ca_key_path.chmod(0o600)
-
-    ca_cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-
-    log.info(f"CA certificate written to {ca_cert_path}")
-    return ca_cert_path, ca_key_path
+    key_path.chmod(0o600)
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    return cert_path, key_path
 
 
-def _load_ca(ca_cert_path: Path, ca_key_path: Path) -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
-    """Load CA cert and key from PEM files."""
-    ca_cert = x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
-    ca_key = serialization.load_pem_private_key(ca_key_path.read_bytes(), password=None)
-    return ca_cert, ca_key  # type: ignore[return-value]
+def _load_ca(cert_path: Path, key_path: Path) -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
+    cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+    key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
+    return cert, key  # type: ignore[return-value]
 
 
 class CertificateAuthority:
-    """In-memory CA that generates per-host TLS certificates.
+    """In-memory CA that mints leaf certs on demand and caches them."""
 
-    Caches generated host certs for the lifetime of the process.
-    """
+    def __init__(self, cert_path: Path, key_path: Path) -> None:
+        self._cert, self._key = _load_ca(cert_path, key_path)
+        self._cache: dict[str, tuple[bytes, bytes]] = {}
 
-    def __init__(self, ca_cert_path: Path, ca_key_path: Path) -> None:
-        self._ca_cert, self._ca_key = _load_ca(ca_cert_path, ca_key_path)
-        self._host_cache: dict[str, tuple[bytes, bytes]] = {}
-
-    def get_host_cert_pem(self, hostname: str) -> tuple[bytes, bytes]:
-        """Return (cert_pem, key_pem) for the given hostname.
-
-        Generates and caches a new certificate signed by the CA if needed.
-        """
-        if hostname in self._host_cache:
-            return self._host_cache[hostname]
+    def get_host_pem(self, hostname: str) -> tuple[bytes, bytes]:
+        cached = self._cache.get(hostname)
+        if cached is not None:
+            return cached
 
         key = _generate_key()
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = _dt.datetime.now(_dt.timezone.utc)
 
-        subject = x509.Name(
-            [
-                x509.NameAttribute(NameOID.COMMON_NAME, hostname),
-            ]
-        )
-
-        # Build SAN: use IPAddress for IP addresses, DNSName for hostnames
-        san_names: list[x509.GeneralName] = []
+        san: list[x509.GeneralName] = []
         try:
             ip = ipaddress.ip_address(hostname)
-            san_names.append(x509.IPAddress(ip))
+            san.append(x509.IPAddress(ip))
         except ValueError:
-            san_names.append(x509.DNSName(hostname))
+            san.append(x509.DNSName(hostname))
 
-        builder = (
+        cert = (
             x509.CertificateBuilder()
-            .subject_name(subject)
-            .issuer_name(self._ca_cert.subject)
+            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)]))
+            .issuer_name(self._cert.subject)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now)
-            .not_valid_after(now + datetime.timedelta(days=_HOST_VALIDITY_DAYS))
+            .not_valid_after(now + _dt.timedelta(days=_HOST_VALIDITY_DAYS))
+            .add_extension(x509.SubjectAlternativeName(san), critical=False)
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
             .add_extension(
-                x509.SubjectAlternativeName(san_names),
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(self._key.public_key()),
                 critical=False,
             )
-            .add_extension(
-                x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
-                critical=False,
-            )
-            .add_extension(
-                x509.AuthorityKeyIdentifier.from_issuer_public_key(self._ca_key.public_key()),
-                critical=False,
-            )
-            .add_extension(
-                x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
-                critical=False,
-            )
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+            .sign(self._key, hashes.SHA256())
         )
-
-        cert = builder.sign(self._ca_key, hashes.SHA256())
 
         cert_pem = cert.public_bytes(serialization.Encoding.PEM)
         key_pem = key.private_bytes(
@@ -184,29 +166,22 @@ class CertificateAuthority:
             format=serialization.PrivateFormat.TraditionalOpenSSL,
             encryption_algorithm=serialization.NoEncryption(),
         )
-
-        self._host_cache[hostname] = (cert_pem, key_pem)
+        self._cache[hostname] = (cert_pem, key_pem)
         return cert_pem, key_pem
 
     def make_ssl_context(self, hostname: str) -> ssl.SSLContext:
-        """Create an SSL context for serving TLS as the given hostname."""
-        import tempfile
-
-        cert_pem, key_pem = self.get_host_cert_pem(hostname)
-
+        cert_pem, key_pem = self.get_host_pem(hostname)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        # Write cert and key to temp files (ssl module needs file paths)
+        # ``load_cert_chain`` only takes file paths; persist briefly to disk.
         with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as cf:
             cf.write(cert_pem)
-            cert_path = cf.name
+            cert_file = cf.name
         with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as kf:
             kf.write(key_pem)
-            key_path = kf.name
-
+            key_file = kf.name
         try:
-            ctx.load_cert_chain(cert_path, key_path)
+            ctx.load_cert_chain(cert_file, key_file)
         finally:
-            Path(cert_path).unlink(missing_ok=True)
-            Path(key_path).unlink(missing_ok=True)
-
+            Path(cert_file).unlink(missing_ok=True)
+            Path(key_file).unlink(missing_ok=True)
         return ctx

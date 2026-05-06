@@ -1,354 +1,475 @@
-"""CLI entry points for claude-tap."""
+"""``claude-tap`` command-line interface (subcommand-based).
+
+Top-level commands::
+
+    run [client]     Trace a client and launch it (default if no subcommand)
+    proxy            Run the proxy alone (for external clients)
+    live             Open the live viewer against an existing trace tree
+    export FILE      Render a trace as markdown / json / html
+    update           Check for, and optionally install, a new release
+    ca {path,regen}  Manage the local TLS CA used by forward mode
+
+A standalone ``--`` argument separates ``claude-tap``'s own flags from the
+arguments forwarded to the launched client. Everything after ``--`` is given
+verbatim to ``claude`` / ``codex`` / ``gemini`` / ``opencode``.
+"""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
-import logging
 import os
-import shutil
 import signal
-import subprocess
 import sys
 import threading
-import urllib.error
-import urllib.request
 import webbrowser
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import aiohttp
 from aiohttp import web
 
+from claude_tap import clients as clients_mod
+from claude_tap import manifest as manifest_mod
+from claude_tap import protocols as protocols_mod
+from claude_tap import update as update_mod
+from claude_tap._version import __version__
 from claude_tap.certs import CertificateAuthority, ensure_ca
 from claude_tap.forward_proxy import ForwardProxyServer
-from claude_tap.live import LiveViewerServer
-from claude_tap.proxy import proxy_handler
-from claude_tap.trace import TraceWriter
-from claude_tap.viewer import _generate_html_viewer
+from claude_tap.live_viewer import LiveSink, LiveViewerServer
+from claude_tap.logging_setup import configure_logging
+from claude_tap.paths import data_dir
+from claude_tap.pipeline import ProxyContext
+from claude_tap.reverse_proxy import build_app
+from claude_tap.runner import run_client
+from claude_tap.trace import EventBus, JsonlSink, StatsSink
+from claude_tap.viewer import render_html
 
-# Ensure print output is visible immediately (uv tool pipes stdout with full buffering)
+# Keep print() flushed (uv tool wraps stdout in full-buffered pipes).
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(line_buffering=True)
 
-log = logging.getLogger("claude-tap")
-
-try:
-    from importlib.metadata import version as _pkg_version
-
-    __version__ = _pkg_version("claude-tap")
-except Exception:
-    __version__ = "0.0.0"
+SUBCOMMANDS = {"run", "proxy", "live", "export", "update", "ca"}
 
 
-def _open_browser(url: str) -> None:
-    """Open URL in browser without blocking. Silently ignores failures in headless environments."""
-    threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
+# ---------------------------------------------------------------------------
+# Target and mode resolution — kept pure so it's directly testable.
+# ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class ClientConfig:
-    """Per-client configuration for supported AI CLI tools."""
+def resolve_target_and_mode(
+    *,
+    client: clients_mod.Client | None,
+    auth: clients_mod.AuthInfo | None,
+    explicit_target: str | None,
+    explicit_mode: str | None,
+    env: "os._Environ[str] | dict[str, str]",
+    fallback_default_target: str,
+) -> tuple[str, str, str]:
+    """Decide ``(target, target_source, mode)`` for a launch.
 
-    cmd: str
-    label: str
-    install_url: str
-    base_url_env: str
-    base_url_suffix: str  # appended to http://127.0.0.1:{port}
-    default_target: str
-    nesting_env_keys: tuple[str, ...] = ()  # env vars to clear before launch
+    Priority for ``target`` (the real upstream we forward each request to):
 
-    @property
-    def missing_help(self) -> str:
-        return (
-            f"\nError: '{self.cmd}' command not found in PATH.\nPlease install {self.label} first: {self.install_url}\n"
-        )
+    1. ``explicit_target`` (``--target``) wins outright.
+    2. ``client.read_configured_upstream(env)`` — the user's actual base_url
+       parsed from their CLI's own config files / env vars. This is what
+       preserves the transparency contract: never silently overwrite a
+       user's private-relay configuration.
+    3. ``auth.suggested_target`` — endpoint implied by their login state.
+    4. ``fallback_default_target`` — protocol default.
 
-    def reverse_base_url(self, port: int) -> str:
-        return f"http://127.0.0.1:{port}{self.base_url_suffix}"
+    Mode auto-picks ``reverse`` for clients whose env / CLI-arg redirect is
+    reliable. Multi-backend clients (opencode / pi / kimi / iflow / hermes)
+    honor a config-file ``baseURL`` over env, so reverse mode would silently
+    capture nothing — those default to ``forward`` (HTTPS_PROXY + CA-MITM).
+    ``--mode`` always wins.
+    """
 
+    configured = client.read_configured_upstream(env) if client is not None else None
 
-CLIENT_CONFIGS: dict[str, ClientConfig] = {
-    "claude": ClientConfig(
-        cmd="claude",
-        label="Claude Code",
-        install_url="https://docs.anthropic.com/en/docs/claude-code",
-        base_url_env="ANTHROPIC_BASE_URL",
-        base_url_suffix="",
-        default_target="https://api.anthropic.com",
-        nesting_env_keys=("CLAUDECODE", "CLAUDE_CODE_SSE_PORT"),
-    ),
-    "codex": ClientConfig(
-        cmd="codex",
-        label="Codex CLI",
-        install_url="https://github.com/openai/codex",
-        base_url_env="OPENAI_BASE_URL",
-        base_url_suffix="/v1",
-        default_target="https://api.openai.com",
-    ),
-}
-
-
-async def run_client(
-    port: int,
-    extra_args: list[str],
-    client: str = "claude",
-    proxy_mode: str = "reverse",
-    ca_cert_path: Path | None = None,
-) -> int:
-    cfg = CLIENT_CONFIGS[client]
-
-    if shutil.which(cfg.cmd) is None:
-        print(cfg.missing_help)
-        return 1
-
-    env = os.environ.copy()
-
-    cmd_args = list(extra_args)
-
-    if proxy_mode == "forward":
-        proxy_url = f"http://127.0.0.1:{port}"
-        # Set both upper/lower-case variants for tools that read one form only.
-        env["HTTP_PROXY"] = proxy_url
-        env["HTTPS_PROXY"] = proxy_url
-        env["ALL_PROXY"] = proxy_url
-        env["http_proxy"] = proxy_url
-        env["https_proxy"] = proxy_url
-        env["all_proxy"] = proxy_url
-        if ca_cert_path:
-            env["NODE_EXTRA_CA_CERTS"] = str(ca_cert_path)
-
-        if client == "claude":
-            # Claude Code may source proxy env from settings rather than process env.
-            # Inject equivalent settings unless user already provided --settings.
-            has_settings_arg = any(arg == "--settings" or arg.startswith("--settings=") for arg in cmd_args)
-            if not has_settings_arg:
-                settings_payload: dict[str, dict[str, str]] = {
-                    "env": {
-                        "HTTP_PROXY": proxy_url,
-                        "HTTPS_PROXY": proxy_url,
-                        "ALL_PROXY": proxy_url,
-                        "http_proxy": proxy_url,
-                        "https_proxy": proxy_url,
-                        "all_proxy": proxy_url,
-                    }
-                }
-                if ca_cert_path:
-                    settings_payload["env"]["NODE_EXTRA_CA_CERTS"] = str(ca_cert_path)
-                cmd_args = ["--settings", json.dumps(settings_payload, separators=(",", ":"))] + cmd_args
-        # Don't set provider-specific base URL in forward mode
+    if explicit_target:
+        target = explicit_target
+        target_source = "from --target"
+    elif configured:
+        target = configured
+        target_source = f"from {client.label} config" if client else "from config"
+    elif auth is not None and auth.suggested_target:
+        target = auth.suggested_target
+        target_source = f"auto: {auth.detail}"
     else:
-        base_url = cfg.reverse_base_url(port)
-        env[cfg.base_url_env] = base_url
-        env["NO_PROXY"] = "127.0.0.1"
+        target = fallback_default_target
+        target_source = "default"
 
-    for key in cfg.nesting_env_keys:
-        env.pop(key, None)
-
-    cmd = [cfg.cmd] + cmd_args
-    print(f"\n🚀 Starting {cfg.label}: {' '.join(cmd)}")
-    if proxy_mode == "forward":
-        print(f"   HTTPS_PROXY=http://127.0.0.1:{port}")
-        if ca_cert_path:
-            print(f"   NODE_EXTRA_CA_CERTS={ca_cert_path}")
+    if explicit_mode in ("reverse", "forward"):
+        mode = explicit_mode
+    elif client is not None and not client.env_redirect_reliable:
+        # Multi-backend clients (opencode / pi / kimi / iflow / hermes)
+        # honor a config-file ``baseURL`` over our env override, so reverse
+        # mode would silently capture nothing. Forward mode (HTTPS_PROXY +
+        # CA-MITM) reliably intercepts regardless of how the client picks
+        # its upstream.
+        mode = "forward"
     else:
-        print(f"   {cfg.base_url_env}={cfg.reverse_base_url(port)}")
-    print()
+        mode = "reverse"
 
-    # Give child its own process group and make it the foreground group
-    # so the TUI app has full terminal control (e.g. Cmd+Delete, Ctrl+U).
-    use_fg = hasattr(os, "tcsetpgrp") and sys.stdin.isatty()
+    return target, target_source, mode
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        env=env,
-        stdin=None,
-        stdout=None,
-        stderr=None,
-        **({"process_group": 0} if use_fg else {}),
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="claude-tap",
+        description=(
+            "Trace Claude Code / Codex CLI API traffic through a local proxy.\n\n"
+            "If no subcommand is given, ``run`` is implied. Anything after ``--`` is\n"
+            "forwarded verbatim to the launched client."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "EXAMPLES\n"
+            "  claude-tap                                # trace claude with defaults\n"
+            "  claude-tap -L                             # + live viewer in browser\n"
+            "  claude-tap -- --model claude-opus-4-6     # forward args to claude\n"
+            "  claude-tap codex                          # auto-picks ChatGPT OAuth target if present\n"
+            "  claude-tap gemini                         # uses GEMINI_API_KEY env var\n"
+            "  claude-tap opencode                       # multi-protocol: anthropic+openai+gemini\n"
+            "  claude-tap proxy --protocol openai        # standalone proxy, OpenAI paths only\n"
+            "  claude-tap export trace.jsonl -o out.md\n"
+            "  claude-tap export trace.jsonl --format html\n"
+            "  claude-tap ca path                        # print CA cert path\n"
+        ),
+    )
+    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("-v", "--verbose", action="count", default=0, help="increase verbosity (-vv = debug)")
+    parser.add_argument("-q", "--quiet", action="store_true", help="suppress non-error output")
+    parser.add_argument("--no-color", action="store_true", help="disable ANSI colors (also honors NO_COLOR)")
+
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    _build_run_parser(sub)
+    _build_proxy_parser(sub)
+    _build_live_parser(sub)
+    _build_export_parser(sub)
+    _build_update_parser(sub)
+    _build_ca_parser(sub)
+
+    return parser
+
+
+def _add_proxy_options(parser: argparse.ArgumentParser, *, default_host: str) -> None:
+    parser.add_argument("-p", "--port", type=int, default=0, help="proxy port (default: auto)")
+    parser.add_argument("-H", "--host", default=default_host, help=f"bind address (default: {default_host})")
+    parser.add_argument("-t", "--target", default=None, help="upstream API URL (default: protocol's default)")
+    parser.add_argument(
+        "-m",
+        "--mode",
+        choices=("reverse", "forward"),
+        default=None,
+        help="proxy mode (default: per-client; multi-backend clients use forward)",
+    )
+    parser.add_argument("-o", "--output-dir", default="./.traces", help="trace output directory")
+    parser.add_argument("--max-traces", type=int, default=50, help="keep last N sessions (0 = unlimited)")
+    parser.add_argument("--no-update-check", action="store_true", help="skip PyPI update check")
+
+
+def _add_viewer_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("-L", "--live", action="store_true", help="start the real-time viewer alongside")
+    parser.add_argument("--live-port", type=int, default=0, help="live viewer port (default: auto)")
+    parser.add_argument("--no-open", action="store_true", help="don't auto-open the HTML viewer on exit")
+
+
+def _build_run_parser(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "run",
+        help="Trace a client and launch it (default subcommand)",
+        description="Start the proxy and spawn the chosen client pointed at it.",
+    )
+    p.add_argument(
+        "client",
+        nargs="?",
+        default="claude",
+        choices=clients_mod.names(),
+        help="which client to launch (default: claude)",
+    )
+    _add_proxy_options(p, default_host="127.0.0.1")
+    _add_viewer_options(p)
+
+
+def _build_proxy_parser(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "proxy",
+        help="Run the proxy without launching a client",
+        description=(
+            "Start the proxy and wait. The proxy accepts requests for any path matching one of "
+            "the selected protocols' allowlists; defaults to all known protocols."
+        ),
+    )
+    p.add_argument(
+        "--protocol",
+        action="append",
+        choices=protocols_mod.names(),
+        help="upstream protocol to accept (repeat for multiple; default: all known protocols)",
+    )
+    _add_proxy_options(p, default_host="0.0.0.0")
+    _add_viewer_options(p)
+
+
+def _build_live_parser(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "live",
+        help="Open the live viewer against an existing trace tree",
+        description="Start an HTTP server that serves the viewer over historic and new traces.",
+    )
+    p.add_argument("-p", "--port", type=int, default=0)
+    p.add_argument("-H", "--host", default="127.0.0.1")
+    p.add_argument("-o", "--output-dir", default="./.traces")
+    p.add_argument("--no-open", action="store_true")
+
+
+def _build_export_parser(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "export",
+        help="Render a trace JSONL file as markdown / json / html",
+        description="Read a trace JSONL (or '-' for stdin) and write a rendered version.",
+    )
+    p.add_argument("trace", help="path to a .jsonl trace file (use '-' to read stdin)")
+    p.add_argument("-o", "--output", default=None, help="output file (default: stdout, '-' = stdout)")
+    p.add_argument(
+        "--format",
+        dest="fmt",
+        choices=("markdown", "json", "html"),
+        default=None,
+        help="output format (default: inferred from -o, else markdown)",
+    )
+    p.add_argument(
+        "--full-events",
+        action="store_true",
+        help="(html only) keep per-chunk SSE/WebSocket event lists; can grow the file 5-10x",
     )
 
-    if use_fg:
-        try:
-            os.tcsetpgrp(sys.stdin.fileno(), proc.pid)
-        except OSError:
-            pass
 
-    # --- Signal handling: graceful Ctrl+C / Ctrl+Z ---
-    loop = asyncio.get_running_loop()
+def _build_update_parser(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "update",
+        help="Check PyPI for updates and (optionally) install",
+        description="Without flags this prints the latest version. Pass --install to upgrade.",
+    )
+    p.add_argument("--install", action="store_true", help="actually install if a newer version exists")
 
-    # Prevent Ctrl+Z from suspending the session
-    old_sigtstp = signal.signal(signal.SIGTSTP, signal.SIG_IGN)
 
-    sigint_count = 0
+def _build_ca_parser(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "ca",
+        help="Manage the local CA used by forward mode",
+        description="Print, regenerate, or display install instructions for the local TLS CA.",
+    )
+    csub = p.add_subparsers(dest="ca_action", metavar="ACTION")
+    csub.add_parser("path", help="print the CA certificate path")
+    csub.add_parser("regen", help="delete and regenerate the CA")
+    csub.add_parser("install", help="print platform-specific instructions to trust the CA")
 
-    def _handle_sigint():
-        nonlocal sigint_count
-        sigint_count += 1
-        if sigint_count == 1:
-            if proc.returncode is None:
-                proc.terminate()
-                print(f"\n⏳ Shutting down {cfg.label}... (Ctrl+C again to force)")
-        else:
-            if proc.returncode is None:
-                proc.kill()
 
-    def _handle_sigtstp():
-        if proc.returncode is None:
-            proc.terminate()
-            print(f"\n⏳ Shutting down {cfg.label}...")
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
+
+def _split_forward(argv: list[str]) -> tuple[list[str], list[str]]:
+    if "--" not in argv:
+        return argv, []
+    idx = argv.index("--")
+    return argv[:idx], argv[idx + 1 :]
+
+
+def _normalise_command(argv: list[str]) -> list[str]:
+    """If argv does not start with a known subcommand, prepend ``run``."""
+    if not argv:
+        return ["run"]
+    head = argv[0]
+    if head in SUBCOMMANDS or head in ("-h", "--help", "-V", "--version"):
+        return argv
+    # Help-only flags should fall through to the top-level parser, but other
+    # leading flags imply the user wants ``run``.
+    return ["run"] + argv
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    own, forward = _split_forward(raw)
+    own = _normalise_command(own)
+
+    parser = build_parser()
+    args = parser.parse_args(own)
+    args.forward = forward
+
+    if args.no_color:
+        os.environ["NO_COLOR"] = "1"
+
+    cmd = args.command
+    if cmd in (None, "run"):
+        return _run_pipeline(args, launch_client=True)
+    if cmd == "proxy":
+        return _run_pipeline(args, launch_client=False)
+    if cmd == "live":
+        return _run_live_only(args)
+    if cmd == "export":
+        return _run_export(args)
+    if cmd == "update":
+        return _run_update(args)
+    if cmd == "ca":
+        return _run_ca(args)
+    parser.error(f"unknown command: {cmd}")
+    return 2  # pragma: no cover
+
+
+# ---------------------------------------------------------------------------
+# run / proxy
+# ---------------------------------------------------------------------------
+
+
+def _run_pipeline(args: argparse.Namespace, *, launch_client: bool) -> int:
     try:
-        loop.add_signal_handler(signal.SIGINT, _handle_sigint)
-        loop.add_signal_handler(signal.SIGTSTP, _handle_sigtstp)
-    except (NotImplementedError, OSError):
-        pass
-
-    code = await proc.wait()
-
-    # Restore parent as foreground process group.
-    # Ignore SIGTTOU first — the parent is still in the background group
-    # and any terminal write (including tcsetpgrp) would suspend it.
-    if use_fg:
-        old_sigttou = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
-        try:
-            os.tcsetpgrp(sys.stdin.fileno(), os.getpgrp())
-        except OSError:
-            pass
-        signal.signal(signal.SIGTTOU, old_sigttou)
-
-    # Restore original SIGTSTP handler and remove async signal handlers
-    signal.signal(signal.SIGTSTP, old_sigtstp)
-    try:
-        loop.remove_signal_handler(signal.SIGINT)
-    except (NotImplementedError, OSError):
-        pass
-    try:
-        loop.remove_signal_handler(signal.SIGTSTP)
-    except (NotImplementedError, OSError):
-        pass
-
-    print(f"\n📋 {cfg.label} exited with code {code}")
-    return code
+        return asyncio.run(_run_pipeline_async(args, launch_client=launch_client))
+    except KeyboardInterrupt:
+        return 0
 
 
-async def async_main(args: argparse.Namespace):
-    output_dir = Path(args.output_dir)
+async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) -> int:
+    # Two paths converge here:
+    #   - ``run <client>``: we have a Client; its protocols decide what we accept.
+    #   - ``proxy --protocol …``: no client; user picks protocols directly.
+    if launch_client:
+        client = clients_mod.get(getattr(args, "client", None) or "claude")
+        protocols = client.protocols
+        # For target auto-detection: ask the client.
+        auth = client.detect_auth()
+        label = client.label
+    else:
+        client = None
+        chosen = getattr(args, "protocol", None) or list(protocols_mod.names())
+        protocols = tuple(protocols_mod.get(n) for n in chosen)
+        auth = None
+        label = "proxy"
+
+    target, target_source, mode = resolve_target_and_mode(
+        client=client,
+        auth=auth,
+        explicit_target=args.target,
+        explicit_mode=args.mode,
+        env=os.environ,
+        fallback_default_target=protocols[0].default_target,
+    )
+    args.mode = mode
+
+    sys.stdout.write(
+        f"[claude-tap] {label} target: {target}  ({target_source})  protocols: {','.join(p.name for p in protocols)}\n"
+    )
+    if auth is not None and not auth.logged_in:
+        sys.stderr.write(f"[claude-tap] warning: {auth.detail}\n")
+
+    output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now()
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H%M%S")
-    ts = now.strftime("%Y%m%d_%H%M%S")  # kept for manifest compatibility
+    ts = now.strftime("%Y%m%d_%H%M%S")
     date_dir = output_dir / date_str
     date_dir.mkdir(parents=True, exist_ok=True)
     trace_path = date_dir / f"trace_{time_str}.jsonl"
     log_path = date_dir / f"trace_{time_str}.log"
+    html_path = trace_path.with_suffix(".html")
 
-    # Start live viewer server if requested
-    live_server: LiveViewerServer | None = None
-    if args.live_viewer:
-        live_server = LiveViewerServer(trace_path, port=args.live_port, host=args.host, output_dir=output_dir)
-        await live_server.start()
-        print(f"🌐 Live viewer: {live_server.url}")
-        _open_browser(live_server.url)
+    configure_logging(verbosity=args.verbose, quiet=args.quiet, log_file=log_path)
 
-    writer = TraceWriter(trace_path, live_server=live_server)
+    # StatsSink picks the protocol whose ``allowed_paths`` matches each
+    # request's path (see ``trace.StatsSink.handle``), so multi-protocol
+    # clients (opencode) report usage correctly regardless of which backend
+    # the user routed to.
+    bus = EventBus()
+    jsonl = JsonlSink(trace_path)
+    stats = StatsSink(protocols)
+    bus.subscribe(jsonl)
+    bus.subscribe(stats)
 
-    # Proxy logs go to file, not terminal (avoids polluting Claude TUI)
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
-    file_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
-    log.addHandler(file_handler)
-    log.setLevel(logging.DEBUG)
-    # Suppress aiohttp logs from polluting the terminal
-    logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
-    # Redirect aiohttp.server errors (e.g. broken connections) to log file only
-    aiohttp_server_log = logging.getLogger("aiohttp.server")
-    aiohttp_server_log.addHandler(file_handler)
-    aiohttp_server_log.propagate = False
-
-    # Honor system proxy env (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY) for
-    # outbound upstream requests. This is important when users route traffic
-    # through tools like Clash/VPN.
     session = aiohttp.ClientSession(auto_decompress=False, trust_env=True)
 
-    # Forward proxy mode: raw TCP server with CONNECT/TLS termination
-    # Reverse proxy mode: aiohttp web app (current behavior)
     forward_server: ForwardProxyServer | None = None
-    runner: web.AppRunner | None = None
+    web_runner: web.AppRunner | None = None
     ca_cert_path: Path | None = None
 
-    if args.proxy_mode == "forward":
-        ca_cert_path, ca_key_path = ensure_ca()
-        ca = CertificateAuthority(ca_cert_path, ca_key_path)
-        forward_server = ForwardProxyServer(
-            host=args.host,
-            port=args.port,
-            ca=ca,
-            writer=writer,
-            session=session,
-        )
+    ctx = ProxyContext(protocols=protocols, target=target, bus=bus, session=session)
+
+    if args.mode == "forward":
+        cert_path, key_path = ensure_ca()
+        ca = CertificateAuthority(cert_path, key_path)
+        ca_cert_path = cert_path
+        forward_server = ForwardProxyServer(args.host, args.port, ca, ctx)
         actual_port = await forward_server.start()
-        print(f"🔍 claude-tap v{__version__} forward proxy on http://{args.host}:{actual_port}")
-        print(f"   CA cert: {ca_cert_path}")
+        sys.stdout.write(f"[claude-tap] v{__version__} forward proxy on http://{args.host}:{actual_port}\n")
+        sys.stdout.write(f"[claude-tap] CA cert: {cert_path}\n")
     else:
-        app = web.Application(client_max_size=0)  # No body size limit (proxy must forward everything)
-        app["trace_ctx"] = {
-            "target_url": args.target,
-            "writer": writer,
-            "session": session,
-            "turn_counter": 0,
-            "strip_path_prefix": "/v1" if args.client == "codex" and "api.openai.com" not in args.target else "",
-        }
-        app.router.add_route("*", "/{path_info:.*}", proxy_handler)
-
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, args.host, args.port)
+        app = build_app(ctx)
+        web_runner = web.AppRunner(app)
+        await web_runner.setup()
+        site = web.TCPSite(web_runner, args.host, args.port)
         await site.start()
-
-        # Resolve actual port (site._server is a private API; fall back to args.port)
         try:
             actual_port = site._server.sockets[0].getsockname()[1]
         except (AttributeError, IndexError, OSError):
             actual_port = args.port
-        print(f"🔍 claude-tap v{__version__} listening on http://{args.host}:{actual_port}")
+        sys.stdout.write(f"[claude-tap] v{__version__} listening on http://{args.host}:{actual_port}\n")
 
-    print(f"📁 Trace file: {trace_path}")
+    sys.stdout.write(f"[claude-tap] trace: {trace_path}\n")
+    sys.stdout.flush()
 
-    # Background update check
+    live_server: LiveViewerServer | None = None
+    if getattr(args, "live", False):
+        live_server = LiveViewerServer(
+            current_jsonl=trace_path,
+            port=args.live_port,
+            host=args.host,
+            output_dir=output_dir,
+        )
+        await live_server.start()
+        bus.subscribe(LiveSink(live_server))
+        sys.stdout.write(f"[claude-tap] live viewer: {live_server.url}\n")
+        sys.stdout.flush()
+        if not args.no_open:
+            _open_browser(live_server.url)
+
     if not args.no_update_check:
         try:
-            latest = await _check_pypi_version()
-            if latest and _version_tuple(latest) > _version_tuple(__version__):
-                print(f"⬆️  Update available: {__version__} → {latest}")
-                if not args.no_auto_update:
-                    installer = _detect_installer()
-                    _start_background_update(installer)
-                    print(f"   Downloading update in background ({installer})...")
+            latest = await update_mod.latest_version()
+            if latest and update_mod.is_newer(latest):
+                update_mod.hint(latest)
         except Exception:
             pass
 
     exit_code = 0
     try:
-        if not args.no_launch:
+        if launch_client:
+            assert client is not None
             try:
                 exit_code = await run_client(
-                    actual_port,
-                    args.claude_args,
-                    client=args.client,
-                    proxy_mode=args.proxy_mode,
+                    client=client,
+                    proxy_port=actual_port,
+                    proxy_host=args.host,
+                    forward_args=args.forward,
+                    proxy_mode=args.mode,
                     ca_cert_path=ca_cert_path,
                 )
             except asyncio.CancelledError:
                 pass
         else:
-            print("\n--no-launch mode: proxy running. Press Ctrl+C to stop.")
+            sys.stdout.write("[claude-tap] proxy-only mode; press Ctrl+C to stop.\n")
+            sys.stdout.flush()
             try:
-                while True:
-                    await asyncio.sleep(3600)
+                await _wait_forever()
             except asyncio.CancelledError:
                 pass
     finally:
@@ -361,365 +482,182 @@ async def async_main(args: argparse.Namespace):
                 await forward_server.stop()
             except Exception:
                 pass
-        if runner:
+        if web_runner:
             try:
-                await runner.cleanup()
+                await web_runner.cleanup()
             except Exception:
                 pass
-
-        # Stop live viewer server if running
         if live_server:
             try:
                 await live_server.stop()
             except Exception:
                 pass
+        await bus.close_all()
 
-        # Close writer before generating HTML
-        writer.close()
+        render_html(trace_path, html_path)
 
-        # Generate self-contained HTML viewer
-        html_path = trace_path.with_suffix(".html")
-        _generate_html_viewer(trace_path, html_path)
+        def _rel(p: Path) -> str:
+            return str(p.relative_to(output_dir))
 
-        # Register trace and cleanup old ones
-        trace_files = [str(trace_path.relative_to(output_dir)), str(log_path.relative_to(output_dir))]
+        files = [_rel(trace_path), _rel(log_path)]
         if html_path.exists():
-            trace_files.append(str(html_path.relative_to(output_dir)))
-        _register_trace(output_dir, ts, trace_files)
+            files.append(_rel(html_path))
+        manifest_mod.register(output_dir, ts, files)
         if args.max_traces > 0:
-            cleaned = _cleanup_traces(output_dir, args.max_traces)
-            if cleaned:
-                print(f"\n🧹 Cleaned up {cleaned} old trace(s)")
+            removed = manifest_mod.cleanup(output_dir, args.max_traces)
+            if removed:
+                sys.stdout.write(f"[claude-tap] cleaned up {removed} old trace session(s)\n")
 
-        # Print summary with cost estimation
-        stats = writer.get_summary()
-        print("\n📊 Trace summary:")
-        print(f"   API calls: {stats['api_calls']}")
+        summary = stats.summary()
+        sys.stdout.write("\n[claude-tap] summary:\n")
+        sys.stdout.write(f"  api_calls:    {summary['api_calls']}\n")
+        if summary["input_tokens"] or summary["output_tokens"]:
+            sys.stdout.write(f"  tokens:       {summary['input_tokens']:,} in / {summary['output_tokens']:,} out\n")
+            if summary["cache_read_tokens"]:
+                sys.stdout.write(f"  cache read:   {summary['cache_read_tokens']:,}\n")
+            if summary["cache_create_tokens"]:
+                sys.stdout.write(f"  cache write:  {summary['cache_create_tokens']:,}\n")
+        sys.stdout.write(f"  trace:        {trace_path}\n")
+        sys.stdout.write(f"  log:          {log_path}\n")
+        sys.stdout.write(f"  view:         {html_path}\n")
 
-        # Token breakdown
-        total_tokens = stats["input_tokens"] + stats["output_tokens"]
-        if total_tokens > 0:
-            print(f"   Tokens: {stats['input_tokens']:,} in / {stats['output_tokens']:,} out", end="")
-            if stats["cache_read_tokens"] > 0:
-                print(f" / {stats['cache_read_tokens']:,} cache_read", end="")
-            if stats["cache_create_tokens"] > 0:
-                print(f" / {stats['cache_create_tokens']:,} cache_write", end="")
-            print()
-
-        # Output files
-        print(f"   Trace: {trace_path}")
-        print(f"   Log:   {log_path}")
-        print(f"   View:  {html_path}")
-
-        # Open viewer in browser (default: auto-open unless --tap-no-open)
-        if args.open_viewer and html_path.exists():
-            print("\n🌐 Opening viewer in browser...")
+        if not args.no_open and html_path.exists() and launch_client:
             _open_browser(f"file://{html_path.absolute()}")
+
+        sys.stdout.flush()
 
     return exit_code
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse argv, extracting ``--tap-*`` flags for ourselves and forwarding
-    everything else to the selected client.
-    """
-    if argv is None:
-        argv = sys.argv[1:]
+async def _wait_forever() -> None:
+    stop = asyncio.Event()
 
-    tap_parser = argparse.ArgumentParser(
-        prog="claude-tap",
-        description="Trace Claude Code or Codex API requests via a local proxy. "
-        "All flags not listed below are forwarded to the selected client.",
-        epilog=(
-            "claude code:\n"
-            "  claude-tap                            Basic tracing\n"
-            "  claude-tap --tap-live                 Real-time viewer in browser\n"
-            "  claude-tap -- --model claude-opus-4-6  Pass flags to Claude Code\n"
-            "  claude-tap -- -c                      Continue last conversation\n"
-            "  claude-tap -- --dangerously-skip-permissions  Auto-accept tool calls\n"
-            "  claude-tap --tap-live -- --dangerously-skip-permissions --model claude-sonnet-4-6\n"
-            "\n"
-            "codex cli:\n"
-            "  # API Key users (OPENAI_API_KEY) — default target works out of the box\n"
-            "  claude-tap --tap-client codex\n"
-            "  # OAuth users (ChatGPT Plus/Pro/Team) — must specify target\n"
-            "  claude-tap --tap-client codex --tap-target https://chatgpt.com/backend-api/codex\n"
-            "  # With model and full auto-approval\n"
-            "  claude-tap --tap-client codex -- --model codex-mini-latest --full-auto\n"
-            "\n"
-            "proxy-only mode (connect from another terminal):\n"
-            "  claude-tap --tap-no-launch --tap-port 8080\n"
-            "  # then: ANTHROPIC_BASE_URL=http://127.0.0.1:8080 claude\n"
-            "\n"
-            "export traces:\n"
-            "  claude-tap export trace.jsonl              Export to markdown\n"
-            "  claude-tap export trace.jsonl -o out.md    Export to file\n"
-            "  claude-tap export trace.jsonl --format json Export as JSON\n"
-            "\n"
-            "homepage: https://github.com/liaohch3/claude-tap"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    tap_parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
-
-    # -- Proxy options --
-    proxy_group = tap_parser.add_argument_group("proxy options")
-    proxy_group.add_argument("--tap-port", type=int, default=0, dest="port", help="Proxy port (default: auto)")
-    proxy_group.add_argument(
-        "--tap-host",
-        default=None,
-        dest="host",
-        help="Bind address (default: 127.0.0.1, or 0.0.0.0 with --tap-no-launch)",
-    )
-    proxy_group.add_argument(
-        "--tap-client",
-        choices=["claude", "codex"],
-        default="claude",
-        dest="client",
-        help="Client to launch (default: claude)",
-    )
-    proxy_group.add_argument(
-        "--tap-target",
-        default=None,
-        dest="target",
-        help="Upstream API URL (default: provider-specific)",
-    )
-    proxy_group.add_argument(
-        "--tap-proxy-mode",
-        choices=["reverse", "forward"],
-        default="reverse",
-        dest="proxy_mode",
-        help="'reverse' sets provider base URL (default), 'forward' sets HTTPS_PROXY with CONNECT/TLS termination",
-    )
-    proxy_group.add_argument(
-        "--tap-no-launch", action="store_true", dest="no_launch", help="Only start the proxy, don't launch client"
-    )
-
-    # -- Viewer options --
-    viewer_group = tap_parser.add_argument_group("viewer options")
-    viewer_group.add_argument(
-        "--tap-no-open",
-        action="store_false",
-        dest="open_viewer",
-        default=True,
-        help="Don't auto-open HTML viewer after exit",
-    )
-    viewer_group.add_argument(
-        "--tap-live",
-        action="store_true",
-        dest="live_viewer",
-        help="Start real-time viewer server (auto-opens browser)",
-    )
-    viewer_group.add_argument(
-        "--tap-live-port",
-        type=int,
-        default=0,
-        dest="live_port",
-        help="Port for live viewer server (default: auto)",
-    )
-
-    # -- Storage & update options --
-    storage_group = tap_parser.add_argument_group("storage and update options")
-    storage_group.add_argument(
-        "--tap-output-dir", default="./.traces", dest="output_dir", help="Trace output directory (default: ./.traces)"
-    )
-    storage_group.add_argument(
-        "--tap-max-traces",
-        type=int,
-        default=50,
-        dest="max_traces",
-        help="Max trace sessions to keep (default: 50, 0 = unlimited)",
-    )
-    storage_group.add_argument(
-        "--tap-no-update-check",
-        action="store_true",
-        dest="no_update_check",
-        help="Disable PyPI update check on startup",
-    )
-    storage_group.add_argument(
-        "--tap-no-auto-update",
-        action="store_true",
-        dest="no_auto_update",
-        help="Check for updates but don't auto-download",
-    )
-    args, claude_args = tap_parser.parse_known_args(argv)
-    # Strip leading "--" separator if present (argparse leaves it in remainder)
-    if claude_args and claude_args[0] == "--":
-        claude_args = claude_args[1:]
-    args.claude_args = claude_args
-    # Default host: 0.0.0.0 in --tap-no-launch mode (proxy-only, typically remote),
-    # 127.0.0.1 otherwise (launching the client locally).
-    if args.host is None:
-        args.host = "0.0.0.0" if args.no_launch else "127.0.0.1"
-    if args.target is None:
-        args.target = CLIENT_CONFIGS[args.client].default_target
-    return args
-
-
-# ---------------------------------------------------------------------------
-# Smart update check
-# ---------------------------------------------------------------------------
-
-
-def _version_tuple(v: str) -> tuple[int, ...]:
-    """Parse '0.1.4' into (0, 1, 4) for comparison."""
-    return tuple(int(x) for x in v.strip().split(".") if x.isdigit())
-
-
-async def _check_pypi_version(timeout: float = 3.0) -> str | None:
-    """Check PyPI for the latest version. Returns version string or None."""
-    url = os.environ.get("CLAUDE_TAP_PYPI_URL", "https://pypi.org/pypi/claude-tap/json")
-
-    def _fetch() -> str | None:
-        try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read())
-                return data.get("info", {}).get("version")
-        except Exception:
-            return None
+    def _stop() -> None:
+        stop.set()
 
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _fetch)
-
-
-def _detect_installer() -> str:
-    """Detect whether claude-tap was installed via uv or pip."""
-    exe = sys.executable or ""
-    if "uv" in exe.lower() or shutil.which("uv"):
-        return "uv"
-    return "pip"
-
-
-def _start_background_update(installer: str) -> subprocess.Popen | None:
-    """Start a background process to upgrade claude-tap."""
     try:
-        if installer == "uv":
-            cmd = ["uv", "tool", "upgrade", "claude-tap"]
-        else:
-            cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "claude-tap"]
-        return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        return None
+        loop.add_signal_handler(signal.SIGINT, _stop)
+        loop.add_signal_handler(signal.SIGTERM, _stop)
+    except (NotImplementedError, OSError):
+        pass
+    await stop.wait()
+
+
+def _open_browser(url: str) -> None:
+    threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
-# Trace cleanup – manifest-based
+# live (history-only viewer)
 # ---------------------------------------------------------------------------
 
-_MANIFEST_FILE = ".cloudtap-manifest.json"
+
+def _run_live_only(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir).expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return asyncio.run(_run_live_only_async(args, output_dir))
 
 
-def _load_manifest(output_dir: Path) -> dict:
-    """Load or create the manifest file."""
-    manifest_path = output_dir / _MANIFEST_FILE
-    if manifest_path.exists():
-        try:
-            data = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if data.get("_cloudtap"):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    manifest = {"_cloudtap": True, "version": __version__, "traces": []}
-    _maybe_migrate_existing(output_dir, manifest)
-    _save_manifest(output_dir, manifest)
-    return manifest
+async def _run_live_only_async(args: argparse.Namespace, output_dir: Path) -> int:
+    # No live session is being recorded — we are just browsing history.
+    server = LiveViewerServer(current_jsonl=None, port=args.port, host=args.host, output_dir=output_dir)
+    await server.start()
+    sys.stdout.write(f"[claude-tap] live viewer: {server.url}\n")
+    sys.stdout.flush()
+    if not args.no_open:
+        _open_browser(server.url)
 
-
-def _save_manifest(output_dir: Path, manifest: dict) -> None:
-    """Save manifest to disk."""
-    manifest_path = output_dir / _MANIFEST_FILE
-    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
-def _register_trace(output_dir: Path, ts: str, trace_files: list[str]) -> dict:
-    """Register a new trace session in the manifest."""
-    manifest = _load_manifest(output_dir)
-    entry = {
-        "timestamp": ts,
-        "files": trace_files,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    manifest["traces"].append(entry)
-    _save_manifest(output_dir, manifest)
-    return manifest
-
-
-def _cleanup_traces(output_dir: Path, max_traces: int) -> int:
-    """Remove oldest traces exceeding max_traces. Returns count of deleted sessions."""
-    if max_traces <= 0:
-        return 0
-    manifest = _load_manifest(output_dir)
-    traces = manifest.get("traces", [])
-    if len(traces) <= max_traces:
-        return 0
-    traces.sort(key=lambda t: t.get("timestamp", ""))
-    to_remove = traces[: len(traces) - max_traces]
-    removed = 0
-    for entry in to_remove:
-        parents_to_check: set[Path] = set()
-        for fname in entry.get("files", []):
-            fpath = output_dir / fname
-            if fpath.exists():
-                parents_to_check.add(fpath.parent)
-                try:
-                    fpath.unlink()
-                except OSError:
-                    pass
-        # Remove empty date subdirectories
-        for parent in parents_to_check:
-            if parent != output_dir and parent.is_dir() and not any(parent.iterdir()):
-                try:
-                    parent.rmdir()
-                except OSError:
-                    pass
-        traces.remove(entry)
-        removed += 1
-    manifest["traces"] = traces
-    _save_manifest(output_dir, manifest)
-    return removed
-
-
-def _maybe_migrate_existing(output_dir: Path, manifest: dict) -> None:
-    """Auto-register existing trace_*.jsonl files that are not yet in the manifest."""
-    known_files: set[str] = set()
-    for entry in manifest.get("traces", []):
-        known_files.update(entry.get("files", []))
-
-    for jsonl in sorted(output_dir.glob("**/trace_*.jsonl")):
-        rel = str(jsonl.relative_to(output_dir))
-        if rel in known_files or jsonl.name in known_files:
-            continue
-        stem = jsonl.stem
-        ts = stem.replace("trace_", "", 1)
-        # Prefix with date dir if present
-        if jsonl.parent != output_dir:
-            ts = jsonl.parent.name.replace("-", "") + "_" + ts
-        files = [rel]
-        for suffix in [".log", ".html"]:
-            companion = jsonl.with_suffix(suffix)
-            if companion.exists():
-                files.append(str(companion.relative_to(output_dir)))
-        manifest["traces"].append(
-            {
-                "timestamp": ts,
-                "files": files,
-                "created_at": datetime.fromtimestamp(jsonl.stat().st_mtime, tz=timezone.utc).isoformat(),
-            }
-        )
-
-
-def main_entry() -> None:
-    """Entry point for the claude-tap CLI."""
-    # Check if first argument is "export" subcommand
-    if len(sys.argv) > 1 and sys.argv[1] == "export":
-        from claude_tap.export import export_main
-
-        sys.exit(export_main(sys.argv[2:]))
-
-    args = parse_args()
     try:
-        code = asyncio.run(async_main(args))
-    except KeyboardInterrupt:
-        code = 0
-    sys.exit(code)
+        await _wait_forever()
+    finally:
+        await server.stop()
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# export
+# ---------------------------------------------------------------------------
+
+
+def _run_export(args: argparse.Namespace) -> int:
+    from claude_tap.export import export
+
+    trace = args.trace
+    output = Path(args.output) if args.output and args.output != "-" else None
+    return export(
+        Path(trace) if trace != "-" else Path("-"),
+        output=output,
+        fmt=args.fmt,
+        full_events=getattr(args, "full_events", False),
+    )
+
+
+# ---------------------------------------------------------------------------
+# update
+# ---------------------------------------------------------------------------
+
+
+def _run_update(args: argparse.Namespace) -> int:
+    return asyncio.run(_run_update_async(args))
+
+
+async def _run_update_async(args: argparse.Namespace) -> int:
+    latest = await update_mod.latest_version()
+    if latest is None:
+        sys.stderr.write("[claude-tap] update check failed (no network or PyPI down)\n")
+        return 1
+    if not update_mod.is_newer(latest):
+        sys.stdout.write(f"[claude-tap] up to date ({__version__})\n")
+        return 0
+    sys.stdout.write(f"[claude-tap] update available: {__version__} -> {latest}\n")
+    if not args.install:
+        sys.stdout.write("[claude-tap] run `claude-tap update --install` to upgrade\n")
+        return 0
+    return update_mod.run_upgrade()
+
+
+# ---------------------------------------------------------------------------
+# ca
+# ---------------------------------------------------------------------------
+
+
+def _run_ca(args: argparse.Namespace) -> int:
+    action = args.ca_action or "path"
+    if action == "path":
+        cert_path, key_path = ensure_ca()
+        sys.stdout.write(f"{cert_path}\n")
+        if args.verbose:
+            sys.stderr.write(f"key: {key_path}\n")
+        return 0
+    if action == "regen":
+        d = data_dir()
+        for name in ("ca.pem", "ca-key.pem"):
+            p = d / name
+            if p.exists():
+                p.unlink()
+        cert_path, _ = ensure_ca()
+        sys.stdout.write(f"regenerated: {cert_path}\n")
+        return 0
+    if action == "install":
+        cert_path, _ = ensure_ca()
+        sys.stdout.write(f"CA certificate: {cert_path}\n\n")
+        if sys.platform == "darwin":
+            sys.stdout.write(
+                "Add to System keychain (admin):\n"
+                f"  sudo security add-trusted-cert -d -r trustRoot \\\n"
+                f'    -k /Library/Keychains/System.keychain "{cert_path}"\n'
+            )
+        elif sys.platform.startswith("linux"):
+            target = "/usr/local/share/ca-certificates/claude-tap.crt"
+            sys.stdout.write(
+                f'Trust on Debian/Ubuntu (admin):\n  sudo cp "{cert_path}" {target} && sudo update-ca-certificates\n'
+            )
+        else:  # pragma: no cover
+            sys.stdout.write(
+                "Import the certificate into your OS trust store. Most clients\n"
+                "(claude / codex) read NODE_EXTRA_CA_CERTS=<path> instead.\n"
+            )
+        return 0
+    sys.stderr.write(f"unknown ca action: {action}\n")
+    return 2

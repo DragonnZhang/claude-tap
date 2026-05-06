@@ -1,80 +1,122 @@
-"""TraceWriter – async JSONL writer with statistics."""
+"""Trace event bus and built-in sinks.
+
+Every recorded request becomes a single ``record`` dict that is published to
+all subscribed sinks. The pipeline never knows about file writers or live
+viewers directly — it just calls ``bus.publish(record)``. This is the
+abstraction that lets us add new sinks (webhook, Prometheus, …) without
+touching the proxy code.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Protocol as _Protocol
 
-if TYPE_CHECKING:
-    from claude_tap.live import LiveViewerServer
+from claude_tap.protocols import Protocol, Usage, select_for_path
 
 
-class TraceWriter:
-    """Writes trace records to a JSONL file and accumulates statistics."""
+class Sink(_Protocol):
+    async def handle(self, record: dict) -> None: ...
 
-    def __init__(self, path: Path, live_server: "LiveViewerServer | None" = None):
+    async def close(self) -> None: ...
+
+
+class EventBus:
+    def __init__(self) -> None:
+        self._sinks: list[Sink] = []
+
+    def subscribe(self, sink: Sink) -> None:
+        self._sinks.append(sink)
+
+    async def publish(self, record: dict) -> None:
+        for sink in self._sinks:
+            try:
+                await sink.handle(record)
+            except Exception:
+                # A misbehaving sink must not stop the others (or the proxy).
+                pass
+
+    async def close_all(self) -> None:
+        for sink in self._sinks:
+            try:
+                await sink.close()
+            except Exception:
+                pass
+
+
+class JsonlSink:
+    """Append every record as one JSON line."""
+
+    def __init__(self, path: Path) -> None:
         self.path = path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._fp = open(path, "a", encoding="utf-8")
         self._lock = asyncio.Lock()
         self.count = 0
-        # Token statistics
-        self.total_input_tokens = 0
-        self.total_output_tokens = 0
-        self.total_cache_read_tokens = 0
-        self.total_cache_create_tokens = 0
-        self.models_used: dict[str, int] = {}
-        self._live_server = live_server
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Keep file handle open for real-time append + flush
-        self._file = open(path, "a", encoding="utf-8")
 
-    async def write(self, record: dict) -> None:
-        """Write a record and update statistics."""
+    async def handle(self, record: dict) -> None:
+        line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
         async with self._lock:
-            self._file.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
-            self._file.flush()
+            self._fp.write(line)
+            self._fp.flush()
             self.count += 1
-            self._update_stats(record)
 
-        # Broadcast to live viewer if enabled
-        if self._live_server:
-            await self._live_server.broadcast(record)
+    async def close(self) -> None:
+        if not self._fp.closed:
+            self._fp.flush()
+            self._fp.close()
 
-    def close(self) -> None:
-        """Flush and close the JSONL file."""
-        if self._file and not self._file.closed:
-            self._file.flush()
-            self._file.close()
 
-    def _update_stats(self, record: dict) -> None:
-        """Extract token usage from record and update totals."""
-        req_body = record.get("request", {}).get("body", {})
-        model = req_body.get("model", "unknown") if isinstance(req_body, dict) else "unknown"
-        self.models_used[model] = self.models_used.get(model, 0) + 1
+class StatsSink:
+    """In-memory token / model accounting for the run summary.
 
-        resp_body = record.get("response", {}).get("body", {})
-        usage = resp_body.get("usage", {}) if isinstance(resp_body, dict) else {}
-        if not usage and isinstance(resp_body, dict):
-            usage = resp_body
+    Receives a tuple of protocols rather than a single one; for each record we
+    pick the protocol that owns the request path and use *its* usage
+    extractor. This lets multi-protocol clients (opencode) report tokens
+    correctly regardless of which backend the user routed to.
+    """
 
-        input_tokens = usage.get("input_tokens", 0)
-        output_tokens = usage.get("output_tokens", 0)
-        cache_read = usage.get("cache_read_input_tokens", 0)
-        cache_create = usage.get("cache_creation_input_tokens", 0)
+    def __init__(self, protocols: tuple[Protocol, ...]) -> None:
+        self._protocols = protocols
+        self.api_calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cache_read_tokens = 0
+        self.cache_create_tokens = 0
+        self.models: dict[str, int] = {}
 
-        self.total_input_tokens += input_tokens
-        self.total_output_tokens += output_tokens
-        self.total_cache_read_tokens += cache_read
-        self.total_cache_create_tokens += cache_create
+    async def handle(self, record: dict) -> None:
+        self.api_calls += 1
+        req = record.get("request") or {}
+        req_body = req.get("body") or {}
+        if isinstance(req_body, dict):
+            model = req_body.get("model") or "unknown"
+            self.models[model] = self.models.get(model, 0) + 1
 
-    def get_summary(self) -> dict:
-        """Return a summary of the trace statistics."""
+        resp_body = (record.get("response") or {}).get("body") or {}
+        usage: Usage = Usage()
+        if isinstance(resp_body, dict):
+            protocol = select_for_path(req.get("path") or "", self._protocols) or (
+                self._protocols[0] if self._protocols else None
+            )
+            if protocol is not None:
+                usage = protocol.extract_usage(resp_body)
+        self.input_tokens += usage.input_tokens
+        self.output_tokens += usage.output_tokens
+        self.cache_read_tokens += usage.cache_read_tokens
+        self.cache_create_tokens += usage.cache_create_tokens
+
+    async def close(self) -> None:
+        pass
+
+    def summary(self) -> dict:
         return {
-            "api_calls": self.count,
-            "input_tokens": self.total_input_tokens,
-            "output_tokens": self.total_output_tokens,
-            "cache_read_tokens": self.total_cache_read_tokens,
-            "cache_create_tokens": self.total_cache_create_tokens,
-            "models_used": self.models_used,
+            "api_calls": self.api_calls,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_create_tokens": self.cache_create_tokens,
+            "models": dict(self.models),
         }
