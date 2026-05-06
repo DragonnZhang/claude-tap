@@ -3,184 +3,301 @@
 [![PyPI version](https://img.shields.io/pypi/v/claude-tap.svg)](https://pypi.org/project/claude-tap/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/claude-tap.svg)](https://pypi.org/project/claude-tap/)
 [![Python version](https://img.shields.io/pypi/pyversions/claude-tap.svg)](https://pypi.org/project/claude-tap/)
-[![License](https://img.shields.io/github/license/liaohch3/claude-tap.svg)](https://github.com/liaohch3/claude-tap/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/WEIFENG2333/claude-tap.svg)](LICENSE)
 
-Intercept and inspect API traffic from [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex CLI](https://github.com/openai/codex). See exactly how they construct system prompts, manage history, select tools, and use tokens — in a self-contained HTML trace viewer.
+> Local proxy that traces AI coding-agent CLI traffic — see exactly
+> what Claude Code, Codex, Gemini CLI, opencode, and 7 other agents
+> send to their upstreams, with the response reassembled for
+> inspection.
+
+`claude-tap` sits between your AI CLI and the LLM API, captures every
+request/response (SSE streams reassembled, WebSocket frames decoded),
+and renders the result as a single self-contained HTML trace you can
+share. It is **transparent** — it reads your CLI's own config files
+to learn the upstream URL, so a private relay or regional endpoint is
+never silently overwritten.
+
+```
+┌─────────────┐   set BASE_URL env (reverse) or HTTPS_PROXY (forward)
+│ claude /    │ ──────────────────────────────────────────────► ┌────────────┐
+│ codex /     │                                                 │ claude-tap │
+│ gemini /    │ ◄───── proxied response (chunks streamed) ──── │   proxy    │
+│ opencode /  │                                                 └─────┬──────┘
+│ ...         │                                                       │
+└─────────────┘                                              forwards to
+                                                          your real upstream
+                                                          (read from your
+                                                          CLI's own config)
+```
+
+> **Contributors / coding agents**: see [`CLAUDE.md`](CLAUDE.md) for
+> architecture, the trace JSON schema, extension points, and developer
+> setup.
+
+---
 
 ## Install
 
-Requires Python 3.11+ and the client you want to trace (`claude` or `codex`).
+### 1. Install `claude-tap`
+
+Requires Python 3.11+.
 
 ```bash
-uv tool install claude-tap        # recommended
-pip install claude-tap            # or pip
+uv tool install claude-tap        # recommended (isolated env, on PATH)
+pipx install claude-tap           # or pipx
+pip install claude-tap            # or plain pip (user site)
 ```
 
-## CLI overview
+Verify:
+
+```bash
+claude-tap --version              # should print 0.x.x
+```
+
+If the binary isn't found, make sure `~/.local/bin` (or your platform's
+pipx/uv tool dir) is on `PATH`, or run via `uv tool run claude-tap …`.
+
+### 2. Install the CLI(s) you want to trace
+
+`claude-tap` doesn't install your AI agent CLI — pick whichever you
+already use, or install one from the table below. Always check the
+linked official docs in case the install command has changed.
+
+| CLI            | Install command                                       | Official docs |
+|----------------|-------------------------------------------------------|---------------|
+| Claude Code    | `curl -fsSL https://claude.ai/install.sh \| bash`     | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code) |
+| Codex CLI      | `npm install -g @openai/codex`                        | [github.com/openai/codex](https://github.com/openai/codex) |
+| Gemini CLI     | `npm install -g @google/gemini-cli`                   | [github.com/google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) |
+| opencode       | `npm install -g opencode-ai`                          | [opencode.ai](https://opencode.ai) |
+| Pi             | `npm install -g @mariozechner/pi-coding-agent`        | [github.com/badlogic/pi-mono](https://github.com/badlogic/pi-mono) |
+| Kimi CLI       | `uv tool install kimi-cli`                            | [github.com/MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli) |
+| iFlow CLI      | `npm install -g @iflow-ai/iflow-cli`                  | [github.com/iflow-ai/iflow-cli](https://github.com/iflow-ai/iflow-cli) |
+| Cursor Agent   | `curl -fsSL https://cursor.com/install \| bash`       | [cursor.com/cli](https://cursor.com/cli) |
+| Qoder CLI      | `npm install -g @qoder-ai/qodercli`                   | [qoder.com/cli](https://qoder.com/cli) |
+| Devin CLI      | follow the install script at the docs link            | [docs.devin.ai](https://docs.devin.ai/get-started/devin-intro) |
+| Hermes Agent   | `pipx install hermes-agent`                           | [github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) |
+
+If the binary isn't found when you run `claude-tap <name>`, the error
+message points to the right install page.
+
+### 3. (Optional) Trust the local CA — only for forward-mode CLIs
+
+The five multi-backend CLIs (`opencode` / `pi` / `kimi` / `iflow` /
+`hermes`) and `devin` use forward mode, which terminates TLS using a
+local CA `claude-tap` generates on first use. For Node and Python
+clients, `claude-tap` injects `NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE`
+/ `REQUESTS_CA_BUNDLE` automatically — nothing to do.
+
+Only `devin` (rustls binary) requires installing the CA at the OS
+level:
+
+```bash
+claude-tap ca install        # prints platform-specific instructions
+```
+
+Single-backend CLIs (`claude` / `codex` / `gemini` / `cursor` /
+`qoder`) use reverse mode and never need the CA.
+
+---
+
+## Quick start
+
+Run any supported CLI through `claude-tap` by prefixing it:
+
+```bash
+claude-tap claude -- -p "What is 2+2?"
+```
+
+That's it. The proxy launches, points `claude` at it, captures the API
+calls, and on exit prints:
+
+```
+[claude-tap] summary:
+  api_calls:    2
+  tokens:       352 in / 15 out
+  trace:        ./.traces/2026-05-06/trace_120137.jsonl
+  log:          ./.traces/2026-05-06/trace_120137.log
+  view:         ./.traces/2026-05-06/trace_120137.html
+```
+
+Open the `.html` file in a browser — the entire trace is
+self-contained, shareable, no server required.
+
+Add `-L` (or `--live`) to open a real-time viewer in the browser
+**while** the CLI runs:
+
+```bash
+claude-tap -L claude -- -p "Explain async/await"
+```
+
+---
+
+## Supported CLIs
+
+| CLI            | Command       | Default mode | Auth source                            | Status |
+|----------------|---------------|--------------|----------------------------------------|--------|
+| Claude Code    | `claude`      | reverse      | `~/.claude/.credentials.json` / `ANTHROPIC_API_KEY` | ✅ verified |
+| Codex CLI      | `codex`       | reverse      | `~/.codex/auth.json` / `OPENAI_API_KEY`     | ✅ verified |
+| Gemini CLI     | `gemini`      | reverse      | `~/.gemini/oauth_creds.json` / `GEMINI_API_KEY` | ✅ verified |
+| Cursor Agent   | `cursor-agent`| reverse      | `CURSOR_API_KEY`                       | ✅ wired |
+| Qoder CLI      | `qodercli`    | reverse      | `QODER_ACCESS_TOKEN`                   | ✅ wired |
+| Devin CLI      | `devin`       | forward      | `DEVIN_API_TOKEN`                      | ✅ wired (rustls — needs OS-trusted CA) |
+| opencode       | `opencode`    | forward      | `~/.local/share/opencode/auth.json`    | ✅ verified |
+| Pi             | `pi`          | forward      | `~/.pi/agent/models.json`              | ✅ wired |
+| Kimi CLI       | `kimi`        | forward      | `~/.kimi/config.toml`                  | ✅ wired |
+| iFlow CLI      | `iflow`       | forward      | `~/.iflow/settings.json`               | ✅ verified |
+| Hermes Agent   | `hermes`      | forward      | `~/.hermes/config.yaml`                | ✅ wired |
+
+"verified" = end-to-end tested with real API calls captured.
+"wired" = code path implemented and unit-tested; needs the user's
+credentials to validate the full loop.
+
+You can use `claude-tap <name>` for any of them:
+`claude-tap codex`, `claude-tap kimi`, `claude-tap opencode`, …
+
+---
+
+## How it works
+
+The proxy runs in one of two modes; `claude-tap` picks for you, but
+you can override with `-m reverse` or `-m forward`.
+
+### Reverse mode (default — no CA install)
+
+For **single-backend** CLIs whose env var or CLI flag we can rely on.
+We:
+
+1. Read your CLI's existing `base_url` from its config file or env.
+2. Set `*_BASE_URL=http://127.0.0.1:<port>` (or `-c openai_base_url=…`
+   for codex) so the CLI talks to us.
+3. Forward each request to the URL we read in step 1, **preserving
+   your private relay or regional endpoint exactly**.
+
+This is what makes `claude-tap` transparent: if you have
+`ANTHROPIC_BASE_URL=https://my-relay.example.com` already set,
+`claude-tap` reads that and forwards there, instead of overwriting
+your config and silently sending traffic to `api.anthropic.com`.
+
+### Forward mode (HTTP CONNECT + TLS-MITM)
+
+For **multi-backend** CLIs (opencode, Pi, Kimi, iFlow, Hermes) whose
+config-file `baseURL` is honored over any env var we set.
+Reverse-mode env redirect would silently fail for these, so we:
+
+1. Set `HTTPS_PROXY=http://127.0.0.1:<port>` on the child.
+2. Set `NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`
+   so the child trusts our local CA.
+3. Accept `CONNECT host:443`, terminate TLS using a per-host leaf
+   cert minted from our CA, and forward to the *real* host the
+   CONNECT named.
+
+The CA is generated once on first use, lives in
+`XDG_DATA_HOME/claude-tap/ca.pem`, and only needs OS-level trust if
+you're tracing a rustls-based CLI (currently just `devin`).
+
+---
+
+## CLI reference
 
 ```
 claude-tap [global] <command> [opts] [-- args forwarded to the client]
 
 Commands
-  run [provider]   Trace a client and launch it (default if omitted)
-  proxy            Start the proxy alone (for external clients)
-  live             Open the real-time viewer against an existing trace tree
-  export FILE      Render a trace JSONL as markdown / json / html
-  update           Check for, and optionally install, a new release
-  ca {path,...}    Manage the local TLS CA used by forward mode
+  run [client]    Trace a CLI and launch it under the proxy (default)
+  proxy           Run the proxy alone, accept connections from any client
+  live            Open the real-time viewer against an existing trace tree
+  export FILE     Render a trace JSONL as markdown / json / html
+  update          Check for, and optionally install, a new release
+  ca {path,…}     Manage the local TLS CA used by forward mode
 
 Global options
-  -v, -vv          Increase verbosity (INFO, DEBUG)
-  -q, --quiet      Suppress non-error output
   -V, --version    Show version
+  -v, --verbose    Increase verbosity (-vv = debug)
+  -q, --quiet      Suppress non-error output
       --no-color   Disable ANSI colors (also honors NO_COLOR)
-      --json       Emit JSON status to stdout where supported
+
+Run / proxy options
+  -p, --port PORT      proxy port (default: auto)
+  -H, --host HOST      bind address (default: 127.0.0.1 for run, 0.0.0.0 for proxy)
+  -t, --target URL     upstream API URL (default: read from client config)
+  -m, --mode MODE      reverse | forward (default: per-client)
+  -o, --output-dir D   trace output directory (default: ./.traces)
+      --max-traces N   keep last N sessions (default: 50; 0 = unlimited)
+      --no-update-check
+  -L, --live           also start a real-time viewer in the browser
+      --live-port P    live viewer port (default: auto)
+      --no-open        don't auto-open the HTML viewer on exit
 ```
 
-A standalone `--` separates `claude-tap`'s own flags from arguments forwarded to the launched client. The first form below means "trace `claude` with the live viewer, and pass `--model …` to `claude`":
+`--` separates `claude-tap`'s own flags from arguments forwarded to
+the launched CLI:
 
 ```bash
-claude-tap -L -- --model claude-opus-4-6
+claude-tap claude -- --model claude-opus-4-7  # passes --model to claude
+claude-tap codex -- exec "say hi"             # codex non-interactive
+claude-tap gemini -- -p "explain async"       # gemini headless
 ```
 
-If no subcommand is given, `run` is implied — so `claude-tap` and `claude-tap run` are the same.
+If no subcommand is given, `run` is implied. `claude-tap` and
+`claude-tap run` are the same; both default to `claude` as the client.
 
-## Usage
-
-### Claude Code
-
-```bash
-claude-tap                                       # trace with defaults
-claude-tap -L                                    # + live viewer in browser
-claude-tap -- --model claude-opus-4-6            # forward args
-claude-tap -- -c                                 # continue last conversation
-claude-tap -L -- --dangerously-skip-permissions  # full-power combo
-```
-
-### Codex CLI
-
-Codex supports two auth modes with different upstream targets:
-
-| Auth mode | How to authenticate | Upstream target |
-|-----------|--------------------|-----------------|
-| OAuth (ChatGPT subscription) | `codex login`           | `https://chatgpt.com/backend-api/codex` |
-| API key                      | `OPENAI_API_KEY=...`    | `https://api.openai.com` (default)      |
+### Examples
 
 ```bash
-# OAuth users (must specify target)
-claude-tap codex -t https://chatgpt.com/backend-api/codex
+# Trace your default CLI for a quick task
+claude-tap claude -- -p "What is 2+2?"
 
-# API key users (target works out of the box)
-claude-tap codex
+# Force forward mode (CA install required) for any CLI
+claude-tap claude -m forward
 
-# With model and full auto-approval
-claude-tap codex -- --model codex-mini-latest --full-auto
-```
+# Override the upstream (e.g. point a Codex API-key user at a relay)
+claude-tap codex -t https://my-relay.example.com/v1
 
-### Standalone proxy
-
-Start the proxy without launching a client and connect from another terminal:
-
-```bash
+# Standalone proxy (start the proxy, point external clients at it)
 claude-tap proxy -p 8080
-# In another terminal:
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 claude
+
+# Browse historic traces
+claude-tap live
+
+# Export a single trace to markdown / json / html
+claude-tap export ./.traces/2026-05-06/trace_120137.jsonl -o report.md
+claude-tap export ./.traces/2026-05-06/trace_120137.jsonl --format html
 ```
 
-For Codex:
+---
 
-```bash
-claude-tap proxy --provider codex -t https://chatgpt.com/backend-api/codex -p 8080
-# Then:
-OPENAI_BASE_URL=http://127.0.0.1:8080/v1 codex
-```
+## Troubleshooting
 
-### Live viewer (history)
+**`claude-tap: command not found`** — `uv tool install` puts binaries
+under `~/.local/bin`; make sure that's on your PATH, or use
+`uv tool run claude-tap …`.
 
-```bash
-claude-tap live                  # browse historic traces in browser
-claude-tap live -p 3000          # fixed port
-```
+**Forward mode shows `unable to verify the first certificate`** — the
+child process didn't pick up `NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE`.
+Ensure you're not passing `--env-clear` somewhere, and that the CA
+file at `claude-tap ca path` exists.
 
-### Export
+**Devin not captured** — Devin uses `rustls`, which ignores
+`SSL_CERT_FILE` etc. Run `claude-tap ca install` and follow the
+platform-specific instructions to add the CA to the OS trust store.
 
-```bash
-claude-tap export trace.jsonl                  # markdown to stdout
-claude-tap export trace.jsonl -o out.md        # markdown to file
-claude-tap export trace.jsonl --format json
-claude-tap export trace.jsonl --format html    # standalone HTML viewer
-claude-tap export -                            # read JSONL from stdin
-```
+**Codex says "missing field name in model_providers.openai"** —
+Built-in providers can't be overridden by adding a same-named block.
+`claude-tap` 0.2.0+ uses `-c openai_base_url=…` for the built-in path
+to avoid this. Upgrade if you see this error.
 
-### Updates
+**API call captured but no body shown** — The viewer renders
+`response.body` (the reassembled snapshot). For passthrough protocols
+(Cursor / Qoder / Devin) we don't reassemble; check
+`response.sse_events` for the raw stream.
 
-`run` / `proxy` print a hint when a newer version is on PyPI but never modify the install on their own. Upgrading is opt-in:
-
-```bash
-claude-tap update            # check + print
-claude-tap update --install  # install via uv or pip (auto-detected)
-```
-
-### Local TLS CA (forward mode)
-
-Forward mode terminates TLS so it can read encrypted traffic; that requires a CA the client trusts:
-
-```bash
-claude-tap ca path           # print the CA cert path
-claude-tap ca install        # show platform-specific trust instructions
-claude-tap ca regen          # regenerate the CA
-```
-
-The CA lives under `XDG_DATA_HOME/claude-tap` (Linux) or the platform equivalent.
-
-## Architecture
-
-```
-                              EventBus
-                              /  |  \
-                             /   |   \
-                  JsonlSink   StatsSink   LiveSink
-                                              \
-                                               +-- LiveViewerServer (SSE)
-
-  client  --HTTP/WS-->  ReverseProxy  --HTTPS-->  upstream API
-                  or
-  client  --CONNECT-->  ForwardProxy  --HTTPS-->  upstream API
-                       (TLS termination)
-```
-
-The proxy never knows about file writers or live viewers — every record is published through an `EventBus` that any number of sinks can subscribe to. Adding a new sink (webhook, Prometheus exporter, …) is one file.
-
-Provider-specific logic (path rewrites, allowed paths, streaming protocol, usage extraction) lives in `claude_tap.providers`. Adding a new provider — e.g. Gemini — is one file: implement a `Provider` and register it.
-
-## Development
-
-```bash
-uv sync --extra dev
-uv run ruff check .
-uv run ruff format --check .
-uv run pytest tests/
-```
-
-The test suite is organised so that:
-
-| File                                | Catches                                                  |
-|-------------------------------------|----------------------------------------------------------|
-| `test_providers.py`                 | Provider registry, OAuth vs API-key path-strip rules     |
-| `test_pipeline.py`                  | Header filtering, redaction, decompression, record shape |
-| `test_sse.py`                       | SSE parsing across chunk boundaries; reassembler state   |
-| `test_manifest.py`                  | Trace cleanup, legacy `.cloudtap-*` migration            |
-| `test_viewer.py`                    | Marker injection, lazy mode threshold, `</script>` escape |
-| `test_cli_parsing.py`               | Subcommand dispatch, `--` forwarding, defaults           |
-| `test_update.py`                    | Version comparison, installer detection                  |
-| `test_logging_setup.py`             | Verbosity → level mapping, no root-logger pollution      |
-| `test_export.py`                    | Markdown / JSON / HTML export shape                      |
-| `test_e2e_reverse_proxy.py`         | Full proxy flow against a mock upstream (incl. SSE)      |
-| `test_e2e_live_viewer.py`           | Live SSE delivery to an HTTP client                      |
-| `test_e2e_cli.py`                   | `python -m claude_tap …` end-to-end                      |
-
-Unit tests run in under 2 seconds; the whole suite (including e2e) finishes in well under 5.
+---
 
 ## License
 
-MIT
+[MIT](LICENSE) — see `LICENSE` file for the full text.
+
+For architecture, contributing, and development details, see
+[`CLAUDE.md`](CLAUDE.md). For workflow and review policy, see
+[`AGENTS.md`](AGENTS.md).
