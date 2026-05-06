@@ -115,6 +115,27 @@ def resolve_target_and_mode(
     return target, target_source, mode
 
 
+def _resolve_live_default(args: argparse.Namespace, *, launch_client: bool) -> bool:
+    """Decide whether to start the live viewer when ``--live`` was not given.
+
+    * Explicit ``-L`` / ``--live`` → on.
+    * Explicit ``--no-live`` → off.
+    * Otherwise: on iff this is an interactive ``run`` (TTY, not in CI).
+      ``proxy`` defaults off — that mode is typically used headlessly.
+    """
+    if args.live is True:
+        return True
+    if args.live is False:
+        return False
+    if not launch_client:
+        return False
+    if not sys.stdin.isatty():
+        return False
+    if os.environ.get("CI"):
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
@@ -177,7 +198,17 @@ def _add_proxy_options(parser: argparse.ArgumentParser, *, default_host: str) ->
 
 
 def _add_viewer_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("-L", "--live", action="store_true", help="start the real-time viewer alongside")
+    # ``--live`` defaults to None so the runtime can pick a smart default
+    # (on for interactive ``run``, off for piped / CI / ``proxy``). Use
+    # ``-L`` to force on or ``--no-live`` to force off.
+    parser.add_argument(
+        "-L", "--live", dest="live", action="store_true", default=None,
+        help="force the real-time viewer on (overrides smart default)",
+    )
+    parser.add_argument(
+        "--no-live", dest="live", action="store_false",
+        help="force the real-time viewer off (overrides smart default)",
+    )
     parser.add_argument("--live-port", type=int, default=0, help="live viewer port (default: auto)")
     parser.add_argument("--no-open", action="store_true", help="don't auto-open the HTML viewer on exit")
 
@@ -427,8 +458,9 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
     sys.stdout.write(f"[claude-tap] trace: {trace_path}\n")
     sys.stdout.flush()
 
+    live_enabled = _resolve_live_default(args, launch_client=launch_client)
     live_server: LiveViewerServer | None = None
-    if getattr(args, "live", False):
+    if live_enabled:
         live_server = LiveViewerServer(
             current_jsonl=trace_path,
             port=args.live_port,
@@ -437,7 +469,8 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
         )
         await live_server.start()
         bus.subscribe(LiveSink(live_server))
-        sys.stdout.write(f"[claude-tap] live viewer: {live_server.url}\n")
+        hint = "" if args.live is True else "  (use --no-live to disable)"
+        sys.stdout.write(f"[claude-tap] live viewer: {live_server.url}{hint}\n")
         sys.stdout.flush()
         if not args.no_open:
             _open_browser(live_server.url)

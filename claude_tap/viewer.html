@@ -158,7 +158,29 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   border-right: 1px solid var(--border);
   background: var(--bg-card);
 }
+#sidebar-wrap:not([hidden]) {
+  display: flex; flex-direction: column;
+}
+#session-picker {
+  padding: 6px 12px; gap: 8px; align-items: center;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+#session-picker:not([hidden]) { display: flex; }
+#session-picker label { color: var(--text-secondary); white-space: nowrap; }
+#session-select {
+  flex: 1; padding: 3px 6px; border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-card); color: var(--text);
+  font-size: 13px; cursor: pointer;
+}
+#tool-filter {
+  padding: 4px 8px; font-size: 11px;
+  max-height: 120px; overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
 .sidebar {
+  flex: 1;
   overflow-y: auto;
 }
 .sidebar::-webkit-scrollbar { width: 4px; }
@@ -582,7 +604,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .sse-data { color: var(--text-tertiary); white-space: pre-wrap; word-break: break-word; }
 
 /* ─── Drop zone ─── */
-.drop-zone { display: flex; align-items: center; justify-content: center; flex: 1; padding: 40px; }
+.drop-zone { align-items: center; justify-content: center; flex: 1; padding: 40px; }
+.drop-zone:not([hidden]) { display: flex; }
 .drop-zone-inner {
   border: 2px dashed var(--border); border-radius: 16px;
   padding: 60px 40px; text-align: center; max-width: 480px;
@@ -598,6 +621,24 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   font-weight: 500; transition: background .15s;
 }
 .drop-zone-inner label:hover { background: #2563eb; }
+
+/* ─── Live status pill (in header) ─── */
+#live-status {
+  padding: 4px 10px; border-radius: 12px;
+  font-size: 12px; font-weight: 500;
+  align-items: center; gap: 6px;
+}
+#live-status:not([hidden]) { display: inline-flex; }
+.live-status-dot { width: 6px; height: 6px; border-radius: 50%; }
+.live-status-dot.is-live { animation: pulse 2s infinite; }
+
+/* ─── Live waiting placeholder (no records yet) ─── */
+.live-waiting {
+  text-align: center; padding: 60px 20px;
+}
+.live-waiting-icon { font-size: 48px; margin-bottom: 16px; }
+.live-waiting h2 { margin-bottom: 8px; font-size: 18px; color: var(--text); font-weight: 600; }
+.live-waiting p { color: var(--text-secondary); font-size: 14px; }
 
 /* ─── Empty state ─── */
 .empty-state { padding: 40px; text-align: center; color: var(--text-tertiary); font-size: 14px; }
@@ -1046,7 +1087,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
     <div class="stat-group" id="stat-cache-read-group" style="display:none"><span style="color:var(--cyan)">&#9679;</span><span>Cache R</span> <span class="stat-val" id="stat-cache-read">0</span></div>
     <div class="stat-group" id="stat-cache-write-group" style="display:none"><span style="color:var(--amber)">&#9679;</span><span>Cache W</span> <span class="stat-val" id="stat-cache-write">0</span></div>
     <div class="stat-group"><span id="label-time">Time</span> <span class="stat-val" id="stat-duration">0s</span></div>
-    <div id="live-status" style="display:none;padding:4px 10px;border-radius:12px;font-size:12px;font-weight:500;align-items:center;gap:6px;"></div>
+    <div id="live-status" hidden></div>
   </div>
   <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">&#9790;</button>
   <select class="lang-select" id="lang-select" onchange="setLang(this.value)">
@@ -1073,6 +1114,29 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 </div>
 
 <div class="main" id="main-area">
+  <div id="sidebar-wrap" hidden>
+    <div id="session-picker" hidden>
+      <label>Session:</label>
+      <select id="session-select" onchange="onSessionChange(this.value)"></select>
+    </div>
+    <div class="search-bar" id="search-bar">
+      <span class="search-icon">&#128269;</span>
+      <input type="text" id="search-input" placeholder="Search messages, tools, prompts..." oninput="onSearch(this.value)">
+      <button class="search-clear" id="search-clear" onclick="clearSearch()">&#10005;</button>
+    </div>
+    <div id="tool-filter" hidden></div>
+    <div class="position-indicator" id="position-indicator">
+      <span>Turn <span class="pi-current" id="pi-current">0</span> <span class="pi-total" id="pi-total">of 0</span></span>
+      <div class="pi-bar"><div class="pi-fill" id="pi-fill"></div></div>
+    </div>
+    <div class="sidebar" id="sidebar"></div>
+  </div>
+  <button id="mobile-back-btn" onclick="mobileShowSidebar()" hidden>&#8592; Back to list</button>
+  <div id="mobile-nav-bar" hidden>
+    <button id="mobile-prev-btn" onclick="mobilePrev()" aria-label="Previous entry">&#8592;</button>
+    <span id="mobile-nav-pos"></span>
+    <button id="mobile-next-btn" onclick="mobileNext()" aria-label="Next entry">&#8594;</button>
+  </div>
   <div class="drop-zone" id="drop-zone">
     <div class="drop-zone-inner" id="drop-inner">
       <h2 id="drop-title">Load Trace File</h2>
@@ -1081,30 +1145,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
       <input type="file" id="file-input" accept=".jsonl,.json">
     </div>
   </div>
-  <div id="sidebar-wrap" style="display:none;display:flex;flex-direction:column">
-    <div id="session-picker" style="display:none;padding:6px 12px;border-bottom:1px solid var(--border);font-size:13px;align-items:center;gap:8px;">
-      <label style="color:var(--text-secondary);white-space:nowrap;">Session:</label>
-      <select id="session-select" onchange="onSessionChange(this.value)" style="flex:1;padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text);font-size:13px;cursor:pointer;"></select>
-    </div>
-    <div class="search-bar" id="search-bar">
-      <span class="search-icon">&#128269;</span>
-      <input type="text" id="search-input" placeholder="Search messages, tools, prompts..." oninput="onSearch(this.value)">
-      <button class="search-clear" id="search-clear" onclick="clearSearch()">&#10005;</button>
-    </div>
-    <div id="tool-filter" style="display:none;padding:4px 8px;border-bottom:1px solid var(--border);font-size:11px;max-height:120px;overflow-y:auto"></div>
-    <div class="position-indicator" id="position-indicator">
-      <span>Turn <span class="pi-current" id="pi-current">0</span> <span class="pi-total" id="pi-total">of 0</span></span>
-      <div class="pi-bar"><div class="pi-fill" id="pi-fill"></div></div>
-    </div>
-    <div class="sidebar" id="sidebar" style="flex:1;overflow-y:auto"></div>
-  </div>
-  <button id="mobile-back-btn" onclick="mobileShowSidebar()" style="display:none">&#8592; Back to list</button>
-  <div id="mobile-nav-bar" style="display:none">
-    <button id="mobile-prev-btn" onclick="mobilePrev()" aria-label="Previous entry">&#8592;</button>
-    <span id="mobile-nav-pos"></span>
-    <button id="mobile-next-btn" onclick="mobileNext()" aria-label="Next entry">&#8594;</button>
-  </div>
-  <div class="detail" id="detail" style="display:none"></div>
+  <div class="detail" id="detail" hidden></div>
 </div>
 
 <!-- claude-tap:inject -->
@@ -1217,6 +1258,7 @@ const I18N = {
   en: {
     title: "claude-tap", stats_turns: "Turns", stats_tokens: "Tokens", stats_time: "Time",
     drop_title: "Load Trace File", drop_desc: "Drag & drop a .jsonl trace file, or click to browse", drop_btn: "Choose File",
+    live_waiting_title: "Waiting for API calls...", live_waiting_desc: "Use any supported AI CLI to see traces appear here in real time.",
     turn: "Turn", tok: "tok",
     btn_request_json: "Request JSON", btn_curl: "cURL", btn_diff: "Diff with Prev",
     section_system: "System Prompt", section_messages: "Messages", section_tools: "Tools",
@@ -1241,6 +1283,7 @@ const I18N = {
   "zh-CN": {
     title: "claude-tap", stats_turns: "轮次", stats_tokens: "Token", stats_time: "耗时",
     drop_title: "加载 Trace 文件", drop_desc: "拖放 .jsonl 文件到此处，或点击选择文件", drop_btn: "选择文件",
+    live_waiting_title: "等待 API 请求...", live_waiting_desc: "运行任意支持的 AI CLI，请求会实时出现在这里。",
     turn: "轮次", tok: "tok",
     btn_request_json: "请求 JSON", btn_curl: "cURL", btn_diff: "对比上次",
     section_system: "系统提示词", section_messages: "消息", section_tools: "工具",
@@ -1508,6 +1551,9 @@ async function bootstrapLive() {
     liveCurrentSessionId = CURRENT_SESSION_ID;
     viewingSessionId = CURRENT_SESSION_ID;
   }
+  // Sidebar is always visible in live mode so the user can switch sessions
+  // even before the first request lands.
+  $('#sidebar-wrap').hidden = false;
   updateLiveStatus('connecting');
   await fetchSessions();
   if (viewingSessionId) {
@@ -1520,10 +1566,10 @@ async function bootstrapLive() {
 
 function showWaitingPlaceholder() {
   $('#drop-zone').innerHTML =
-    '<div style="text-align:center;padding:60px 20px;">' +
-    '<div style="font-size:48px;margin-bottom:16px;">📡</div>' +
-    '<h2 style="margin-bottom:8px;">Waiting for API calls...</h2>' +
-    '<p style="color:var(--text-secondary);">Use Claude Code or Codex CLI to see traces appear here in real time.</p>' +
+    '<div class="live-waiting">' +
+    '<div class="live-waiting-icon">📡</div>' +
+    `<h2>${t('live_waiting_title')}</h2>` +
+    `<p>${t('live_waiting_desc')}</p>` +
     '</div>';
 }
 
@@ -1565,7 +1611,7 @@ function populateSessionPicker(sessions) {
     sel.appendChild(og);
   }
   const picker = $('#session-picker');
-  if (picker) picker.style.display = 'flex';
+  if (picker) picker.hidden = false;
 }
 
 async function loadSessionRecords(sessionId) {
@@ -1630,7 +1676,7 @@ function openLiveStream() {
 function updateLiveStatus(forcedStatus) {
   const el = $('#live-status');
   if (!el) return;
-  el.style.display = 'flex';
+  el.hidden = false;
   const status = forcedStatus
     || (liveStreamSource && liveStreamSource.readyState === 1 ? 'connected' : 'disconnected');
   const colors = {
@@ -1648,10 +1694,10 @@ function updateLiveStatus(forcedStatus) {
   } else {
     label = status === 'connecting' ? 'Connecting…' : 'Disconnected';
   }
-  const dotStyle = `width:6px;height:6px;border-radius:50%;background:${c.dot};${status === 'connected' ? 'animation:pulse 2s infinite;' : ''}`;
   el.style.background = c.bg;
   el.style.color = c.color;
-  el.innerHTML = `<span style="${dotStyle}"></span>${label}`;
+  const animClass = status === 'connected' ? ' is-live' : '';
+  el.innerHTML = `<span class="live-status-dot${animClass}" style="background:${c.dot}"></span>${label}`;
 }
 
 /* ===========================================================================
@@ -1717,9 +1763,9 @@ function autoSelectFirst() {
 function getPath(e) { return (e.request?.path || '/unknown').replace(/\?.*$/, ''); }
 
 function renderApp(preserveDetail) {
-  $('#drop-zone').style.display = 'none';
-  $('#sidebar-wrap').style.display = 'flex';
-  $('#detail').style.display = '';
+  $('#drop-zone').hidden = true;
+  $('#sidebar-wrap').hidden = false;
+  $('#detail').hidden = false;
   $('#stats').style.display = '';
   $('#path-filter').style.display = '';
   const pathCounts = {};

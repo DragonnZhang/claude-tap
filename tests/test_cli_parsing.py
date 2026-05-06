@@ -11,7 +11,13 @@ from pathlib import Path
 import pytest
 
 from claude_tap import clients as clients_mod
-from claude_tap.cli import _normalise_command, _split_forward, build_parser, resolve_target_and_mode
+from claude_tap.cli import (
+    _normalise_command,
+    _resolve_live_default,
+    _split_forward,
+    build_parser,
+    resolve_target_and_mode,
+)
 
 # --- splitting / normalisation --------------------------------------------
 
@@ -63,7 +69,8 @@ def test_run_default_client_is_claude(parser):
     assert args.command == "run"
     assert args.client == "claude"
     assert args.host == "127.0.0.1"  # default for run
-    assert args.live is False
+    # ``--live`` is None by default; runtime picks based on TTY / CI / mode.
+    assert args.live is None
     # ``--mode`` is None by default; the per-client default kicks in at runtime.
     assert args.mode is None
 
@@ -88,6 +95,16 @@ def test_run_short_options_work(parser):
     assert args.live is True
     assert args.live_port == 3001
     assert args.output_dir == "/tmp/x"
+
+
+def test_run_no_live_overrides_smart_default(parser):
+    args = parser.parse_args(["run", "--no-live"])
+    assert args.live is False
+
+
+def test_run_live_short_form(parser):
+    args = parser.parse_args(["run", "-L"])
+    assert args.live is True
 
 
 def test_proxy_default_host_is_zero(parser):
@@ -296,6 +313,55 @@ def test_resolve_explicit_mode_always_honored(fake_home: Path):
         fallback_default_target="https://api.anthropic.com",
     )
     assert mode == "forward"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_live_default — TTY-aware smart default
+# ---------------------------------------------------------------------------
+
+
+class _Args:
+    """Minimal argparse.Namespace stand-in for resolver tests."""
+    def __init__(self, *, live):
+        self.live = live
+
+
+def test_live_explicit_on_always_wins(monkeypatch):
+    monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: False)})())
+    monkeypatch.setenv("CI", "1")
+    assert _resolve_live_default(_Args(live=True), launch_client=True) is True
+    assert _resolve_live_default(_Args(live=True), launch_client=False) is True
+
+
+def test_live_explicit_off_always_wins(monkeypatch):
+    monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())
+    monkeypatch.delenv("CI", raising=False)
+    assert _resolve_live_default(_Args(live=False), launch_client=True) is False
+
+
+def test_live_default_off_for_proxy_subcommand(monkeypatch):
+    monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())
+    monkeypatch.delenv("CI", raising=False)
+    assert _resolve_live_default(_Args(live=None), launch_client=False) is False
+
+
+def test_live_default_off_when_stdin_is_pipe(monkeypatch):
+    """Headless / piped invocations get no browser auto-open."""
+    monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: False)})())
+    monkeypatch.delenv("CI", raising=False)
+    assert _resolve_live_default(_Args(live=None), launch_client=True) is False
+
+
+def test_live_default_off_in_ci(monkeypatch):
+    monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())
+    monkeypatch.setenv("CI", "true")
+    assert _resolve_live_default(_Args(live=None), launch_client=True) is False
+
+
+def test_live_default_on_for_interactive_run(monkeypatch):
+    monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())
+    monkeypatch.delenv("CI", raising=False)
+    assert _resolve_live_default(_Args(live=None), launch_client=True) is True
 
 
 def test_resolve_proxy_only_no_client(fake_home: Path):
