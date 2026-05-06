@@ -144,3 +144,30 @@ def test_build_ws_record_extracts_response_completed():
     assert r["response"]["status"] == 101
     assert r["response"]["body"] == {"id": "resp_1", "output": []}
     assert len(r["response"]["ws_events"]) == 2
+
+
+# --- _is_turn_terminal_event (drives per-turn live publish) ---------------
+
+
+def test_turn_terminal_event_recognizes_response_completed():
+    from claude_tap.reverse_proxy import _is_turn_terminal_event
+
+    assert _is_turn_terminal_event('{"type":"response.completed","response":{}}')
+    assert _is_turn_terminal_event('{"type":"response.done","response":{}}')
+
+
+def test_turn_terminal_event_ignores_intermediate_events():
+    from claude_tap.reverse_proxy import _is_turn_terminal_event
+
+    assert not _is_turn_terminal_event('{"type":"response.created"}')
+    assert not _is_turn_terminal_event('{"type":"response.output_text.delta"}')
+    assert not _is_turn_terminal_event('{"type":"response.in_progress"}')
+
+
+def test_turn_terminal_event_handles_garbage():
+    from claude_tap.reverse_proxy import _is_turn_terminal_event
+
+    assert not _is_turn_terminal_event("")
+    assert not _is_turn_terminal_event("not json")
+    # ``response.completed`` substring without proper json shape: no match.
+    assert not _is_turn_terminal_event('"some string with response.completed in it"')

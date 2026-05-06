@@ -10,6 +10,7 @@ protocols at once (used by multi-protocol clients like opencode).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -288,8 +289,45 @@ async def _handle_websocket(
     client_ws = web.WebSocketResponse(protocols=sub_protocols)
     await client_ws.prepare(request)
 
+    # WebSocket connections are typically long-lived (codex keeps one open
+    # across many turns). We publish one record per "turn" — i.e. per
+    # completed response — so the live viewer updates as the user sees the
+    # agent reply, instead of one giant record at disconnect.
     client_msgs: list[str] = []
     server_msgs: list[str] = []
+    turn_started_at = t0
+    turn_request_id = request_id
+    turn_index = turn
+
+    async def _publish_turn(error: str | None = None) -> None:
+        nonlocal client_msgs, server_msgs, turn_started_at, turn_request_id, turn_index
+        if not client_msgs and not server_msgs and not error:
+            return
+        # Atomically swap the buffers BEFORE the awaited publish. Otherwise
+        # ``_c2u`` could append to the old list during the await and we'd
+        # drop those messages when we reset afterwards.
+        client_snapshot = client_msgs
+        server_snapshot = server_msgs
+        client_msgs = []
+        server_msgs = []
+        turn_duration = int((time.monotonic() - turn_started_at) * 1000)
+        record_request_id = turn_request_id
+        record_turn = turn_index
+        turn_started_at = time.monotonic()
+        turn_request_id = f"req_{uuid.uuid4().hex[:12]}"
+        turn_index = ctx.next_turn()
+        record = _build_ws_record(
+            request_id=record_request_id,
+            turn=record_turn,
+            duration_ms=turn_duration,
+            path=request.path_qs,
+            req_headers=request.headers,
+            client_messages=client_snapshot,
+            server_messages=server_snapshot,
+            upstream_base_url=ctx.target,
+            error=error,
+        )
+        await ctx.bus.publish(record)
 
     async def _c2u() -> None:
         try:
@@ -315,6 +353,8 @@ async def _handle_websocket(
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     server_msgs.append(msg.data)
                     await client_ws.send_str(msg.data)
+                    if _is_turn_terminal_event(msg.data):
+                        await _publish_turn()
                 elif msg.type == aiohttp.WSMsgType.BINARY:
                     await client_ws.send_bytes(msg.data)
                 elif msg.type in (
@@ -343,16 +383,27 @@ async def _handle_websocket(
     if not client_ws.closed:
         await client_ws.close()
 
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    record = _build_ws_record(
-        request_id=request_id,
-        turn=turn,
-        duration_ms=duration_ms,
-        path=request.path_qs,
-        req_headers=request.headers,
-        client_messages=client_msgs,
-        server_messages=server_msgs,
-        upstream_base_url=ctx.target,
-    )
-    await ctx.bus.publish(record)
+    # Publish whatever's still buffered at disconnect (incomplete final turn
+    # or a session that disconnected mid-stream).
+    await _publish_turn()
     return client_ws
+
+
+def _is_turn_terminal_event(msg_data: str) -> bool:
+    """True if this WebSocket frame marks the end of one OpenAI/codex
+    response. Used by ``_handle_websocket`` to flush a record per turn so
+    the live viewer updates in real time rather than waiting for the
+    entire (often long-lived) WS connection to close."""
+    if not msg_data or "response.completed" not in msg_data and "response.done" not in msg_data:
+        # Cheap text test before paying for json parse.
+        return False
+    try:
+        d = json.loads(msg_data)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    if isinstance(d, dict):
+        t = d.get("type")
+        return t in ("response.completed", "response.done")
+    return False
+
+
