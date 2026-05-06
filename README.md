@@ -1,9 +1,13 @@
 # claude-tap
 
-[![PyPI version](https://img.shields.io/pypi/v/claude-tap.svg)](https://pypi.org/project/claude-tap/)
-[![PyPI downloads](https://img.shields.io/pypi/dm/claude-tap.svg)](https://pypi.org/project/claude-tap/)
-[![Python version](https://img.shields.io/pypi/pyversions/claude-tap.svg)](https://pypi.org/project/claude-tap/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/github/license/WEIFENG2333/claude-tap.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/status-pre--release-orange.svg)](#install)
+
+> Pre-release fork — not yet published to PyPI. Install from git
+> (instructions below). The original `claude-tap` package on PyPI is
+> a different (older) project and does not include this fork's
+> rewrite.
 
 > Local proxy that traces AI coding-agent CLI traffic — see exactly
 > what Claude Code, Codex, Gemini CLI, opencode, and 7 other agents
@@ -40,12 +44,18 @@ never silently overwritten.
 
 ### 1. Install `claude-tap`
 
-Requires Python 3.11+.
+Requires Python 3.11+ and `git`. This fork is not yet on PyPI; install
+directly from the GitHub repo:
 
 ```bash
-uv tool install claude-tap        # recommended (isolated env, on PATH)
-pipx install claude-tap           # or pipx
-pip install claude-tap            # or plain pip (user site)
+# Recommended — isolated venv, binary on PATH:
+uv tool install git+https://github.com/WEIFENG2333/claude-tap.git
+
+# Or via pipx:
+pipx install git+https://github.com/WEIFENG2333/claude-tap.git
+
+# Or plain pip (user site):
+pip install git+https://github.com/WEIFENG2333/claude-tap.git
 ```
 
 Verify:
@@ -55,7 +65,33 @@ claude-tap --version              # should print 0.x.x
 ```
 
 If the binary isn't found, make sure `~/.local/bin` (or your platform's
-pipx/uv tool dir) is on `PATH`, or run via `uv tool run claude-tap …`.
+pipx/uv tool dir) is on `PATH`, or run via
+`uv tool run --from git+https://github.com/WEIFENG2333/claude-tap.git claude-tap …`.
+
+**For local development** (clone + editable install, recommended if
+you want to modify the code):
+
+```bash
+git clone https://github.com/WEIFENG2333/claude-tap.git
+cd claude-tap
+uv sync --extra dev
+uv run claude-tap --version
+```
+
+### Upgrading
+
+To pull the latest changes from this fork:
+
+```bash
+uv tool upgrade claude-tap        # if installed via uv tool
+pipx upgrade claude-tap           # if installed via pipx
+# Or reinstall:
+uv tool install --force git+https://github.com/WEIFENG2333/claude-tap.git
+```
+
+The built-in `claude-tap update` command checks PyPI, so it won't be
+useful until the fork is published there — for now, use git/uv/pipx
+upgrade as above.
 
 ### 2. Install the CLI(s) you want to trace
 
