@@ -371,6 +371,9 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .tool-block-header {
   display: flex; align-items: baseline; gap: 10px;
   padding: 8px 12px; cursor: pointer; user-select: none; transition: background .1s;
+  /* When a tool is expanded, keep its header visible while the user
+     scrolls inside its body so they can collapse it from anywhere. */
+  position: sticky; top: 0; z-index: 2; background: var(--bg-card);
 }
 .tool-block-header:hover { background: var(--bg-hover); }
 .tb-arrow { font-size: 9px; color: var(--text-tertiary); transition: transform .15s; flex-shrink: 0; }
@@ -429,6 +432,47 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   margin: 4px 0 4px;
 }
 
+/* ─── Markdown host (Raw / MD toggle) ─── */
+.md-host { position: relative; }
+.md-toggle {
+  display: inline-flex; gap: 2px; padding: 2px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); margin-bottom: 8px; font-size: 11px;
+}
+.md-tab {
+  border: 0; background: transparent; cursor: pointer;
+  padding: 3px 10px; border-radius: 4px;
+  color: var(--text-tertiary); font-family: var(--sans); font-size: 11px;
+}
+.md-tab.active { background: var(--bg-card); color: var(--text); font-weight: 600; }
+.md-host[data-mode="raw"] .md-view-md { display: none; }
+.md-host[data-mode="md"]  .md-view-raw { display: none; }
+.md-body { line-height: 1.55; font-size: 13px; color: var(--text); }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 { margin: 12px 0 6px; line-height: 1.3; }
+.md-body h1 { font-size: 18px; }
+.md-body h2 { font-size: 16px; }
+.md-body h3 { font-size: 14px; }
+.md-body p { margin: 6px 0; }
+.md-body ul, .md-body ol { margin: 6px 0; padding-left: 22px; }
+.md-body li { margin: 2px 0; }
+.md-body a { color: var(--blue); }
+.md-body blockquote {
+  border-left: 3px solid var(--border); padding-left: 10px;
+  color: var(--text-secondary); margin: 6px 0;
+}
+.md-body strong { font-weight: 600; }
+.md-body em { font-style: italic; }
+.md-icode {
+  font-family: var(--mono); font-size: 12px;
+  background: var(--bg-hover); padding: 1px 4px; border-radius: 3px;
+}
+.md-code {
+  font-family: var(--mono); font-size: 12px;
+  background: var(--bg); padding: 8px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); overflow-x: auto;
+  white-space: pre; margin: 8px 0;
+}
+
 /* ─── Token usage ─── */
 .token-bar { display: flex; gap: 12px; font-size: 11px; padding: 4px 0 6px; flex-wrap: wrap; margin-bottom: 4px; }
 .tok-item { display: flex; align-items: center; gap: 4px; }
@@ -436,13 +480,45 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .tok-label { color: var(--text-tertiary); font-size: 11px; }
 .tok-val { color: var(--text-secondary); font-weight: 600; font-family: var(--mono); font-size: 11px; }
 
-/* ─── JSON viewer ─── */
+/* ─── JSON viewer (collapsible tree + wrap toggle) ─── */
+.json-host { position: relative; }
+.json-toolbar {
+  display: flex; gap: 6px; margin-bottom: 6px;
+}
+.json-btn {
+  font-size: 11px; padding: 3px 10px; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--bg);
+  color: var(--text-secondary); cursor: pointer; font-family: var(--sans);
+}
+.json-btn:hover { color: var(--blue); border-color: var(--blue); }
 .json-view {
-  font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word;
-  max-height: 600px; overflow-y: auto; line-height: 1.55;
+  font-family: var(--mono); font-size: 12px;
+  max-height: 600px; overflow: auto; line-height: 1.55;
   background: var(--bg-code); padding: 14px; border-radius: var(--radius-sm);
   border: 1px solid var(--border-light);
+  white-space: pre;
 }
+/* Wrap mode lets long string values flow onto the next line. */
+.json-host[data-wrap="on"] .json-view { white-space: pre-wrap; word-break: break-word; }
+.json-view .jdet { display: inline; }
+.json-view .jdet > summary {
+  cursor: pointer; list-style: none; display: inline;
+}
+.json-view .jdet > summary::-webkit-details-marker { display: none; }
+.json-view .jdet > summary::before {
+  content: '▶'; display: inline-block; width: 10px;
+  font-size: 9px; color: var(--text-tertiary);
+  margin-right: 2px; transition: transform .15s;
+}
+.json-view .jdet[open] > summary::before { transform: rotate(90deg); }
+.json-view .jchildren { display: block; padding-left: 16px; }
+.json-view .ji { display: block; }
+.json-view .jcount {
+  font-size: 10px; color: var(--text-tertiary);
+  background: var(--bg-hover); padding: 0 5px; border-radius: 3px;
+  margin: 0 4px; vertical-align: 1px;
+}
+.json-view .jp { color: var(--text-tertiary); }
 .json-view .jk { color: #7c3aed; }
 .json-view .js { color: #059669; }
 .json-view .jn { color: #d97706; }
@@ -1301,6 +1377,7 @@ const I18N = {
     diff_system: "System Prompt", diff_tools: "Tools", diff_params: "Parameters",
     diff_chars: "chars", diff_tools_unchanged: "tools, unchanged", diff_trailing: "trailing messages unchanged",
     badge_messages: "messages", badge_tools: "tools", badge_events: "events",
+    group_internal: "Internal", json_wrap: "Wrap", json_unwrap: "Unwrap", view_md: "Markdown", view_raw: "Raw",
     search_placeholder: "Search messages, tools, prompts...",
     filter_more: "more", filter_less: "Show less",
     diff_sys_old: "Previous", diff_sys_new: "Current",
@@ -1326,6 +1403,7 @@ const I18N = {
     diff_system: "系统提示词", diff_tools: "工具", diff_params: "参数",
     diff_chars: "字符", diff_tools_unchanged: "个工具，无变化", diff_trailing: "末尾消息无变化",
     badge_messages: "条消息", badge_tools: "个工具", badge_events: "个事件",
+    group_internal: "内部调用", json_wrap: "换行", json_unwrap: "不换行", view_md: "Markdown", view_raw: "原文",
     search_placeholder: "搜索消息、工具、提示词...",
     filter_more: "更多", filter_less: "收起",
     diff_sys_old: "上次", diff_sys_new: "本次",
@@ -2486,7 +2564,10 @@ function renderSidebar(preserveDetail) {
   sb.innerHTML = '';
   const groups = new Map();
   filtered.forEach((e, i) => {
-    const model = e.request?.body?.model || 'unknown';
+    // Records without a model field are housekeeping calls (e.g.
+    // GET /v1/models, /api/codex/apps). Bucket them as "Internal" so the
+    // sidebar isn't littered with "UNKNOWN".
+    const model = e.request?.body?.model || '__internal__';
     if (!groups.has(model)) groups.set(model, []);
     groups.get(model).push({ entry: e, idx: i });
   });
@@ -2506,8 +2587,9 @@ function renderSidebar(preserveDetail) {
   } else {
     sorted.forEach(model => {
       const items = groups.get(model);
-      const shortModel = model.replace(/^claude-/, '').replace(/-\d{8}$/, '');
-      const color = modelColor(model);
+      const isInternal = model === '__internal__';
+      const shortModel = isInternal ? t('group_internal') : model.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+      const color = isInternal ? 'var(--text-tertiary)' : modelColor(model);
       const isCollapsed = collapsedGroups.has(model);
       const header = document.createElement('div');
       header.className = 'sidebar-group-header';
@@ -2775,7 +2857,7 @@ function renderDetail(e) {
   const streamEvents = getResponseEvents(e);
   if (streamEvents.length) html += section(t('section_sse'), renderSSEEvents(streamEvents), false, null, streamEvents.length + ' ' + t('badge_events'));
 
-  html += section(t('section_json'), `<div class="json-view">${syntaxHL(e)}</div>`, false, JSON.stringify(e, null, 2));
+  html += section(t('section_json'), renderJsonHost(e), false, JSON.stringify(e, null, 2));
 
   d.innerHTML = html;
   bindSections(d);
@@ -2928,7 +3010,79 @@ function getResponseOutput(entry) {
   }
   return null;
 }
-function renderSystemPrompt(text) { return `<div class="pre-text">${esc(text)}</div>`; }
+function renderSystemPrompt(text) {
+  const id = 'mdh-' + Math.random().toString(36).slice(2, 9);
+  return (
+    `<div class="md-host" data-mode="raw" id="${id}">` +
+      `<div class="md-toggle">` +
+        `<button class="md-tab active" onclick="setMdMode('${id}','raw')">${t('view_raw')}</button>` +
+        `<button class="md-tab" onclick="setMdMode('${id}','md')">${t('view_md')}</button>` +
+      `</div>` +
+      `<div class="md-view md-view-raw"><div class="pre-text">${esc(text)}</div></div>` +
+      `<div class="md-view md-view-md">${renderMarkdown(text)}</div>` +
+    `</div>`
+  );
+}
+
+function setMdMode(hostId, mode) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  host.dataset.mode = mode;
+  host.querySelectorAll('.md-tab').forEach(b => {
+    b.classList.toggle('active', b.textContent === (mode === 'raw' ? t('view_raw') : t('view_md')));
+  });
+}
+
+// Minimal-but-safe markdown: always escape first, then apply transforms
+// in an order that doesn't unexpectedly nest. Covers headings, lists,
+// code blocks (fenced + inline), bold/italic, links, blockquotes.
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = esc(text);
+
+  // Fenced code blocks ```lang\ncode``` — extract first so their
+  // contents are protected from later inline replacements.
+  const codeBlocks = [];
+  html = html.replace(/```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const i = codeBlocks.length;
+    codeBlocks.push(`<pre class="md-code"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${code}</code></pre>`);
+    return ` CODE${i} `;
+  });
+
+  // Inline code `x` (single line)
+  html = html.replace(/`([^`\n]+)`/g, '<code class="md-icode">$1</code>');
+
+  // Headings (ATX-style at line start)
+  html = html.replace(/^###### (.+)$/gm, '<h6>$1</h6>');
+  html = html.replace(/^##### (.+)$/gm, '<h5>$1</h5>');
+  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+  // Blockquotes
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+
+  // Bold + italic
+  html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+
+  // Links [text](url)
+  html = html.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+  // Lists: contiguous lines beginning with "- " or "* " or "N. "
+  html = html.replace(/(?:^[*-] .+(?:\n[*-] .+)*)/gm, m =>
+    '<ul>' + m.split('\n').map(line => `<li>${line.replace(/^[*-] /, '')}</li>`).join('') + '</ul>'
+  );
+  html = html.replace(/(?:^\d+\. .+(?:\n\d+\. .+)*)/gm, m =>
+    '<ol>' + m.split('\n').map(line => `<li>${line.replace(/^\d+\. /, '')}</li>`).join('') + '</ol>'
+  );
+
+  // Restore code blocks
+  html = html.replace(/ CODE(\d+) /g, (_, i) => codeBlocks[+i]);
+
+  return `<div class="md-body">${html}</div>`;
+}
 
 function renderMessages(msgs) {
   return msgs.map(m => {
@@ -3118,7 +3272,64 @@ function bindSections(container) {
   });
 }
 
-/* ─── Syntax highlight ─── */
+/* ─── Full JSON tree (collapsible objects/arrays + wrap toggle) ─── */
+function renderJsonHost(value) {
+  return (
+    `<div class="json-host" data-wrap="off">` +
+      `<div class="json-toolbar">` +
+        `<button class="json-btn" onclick="toggleJsonWrap(this)">${t('json_wrap')}</button>` +
+      `</div>` +
+      `<div class="json-view">${renderJsonTree(value, 0)}</div>` +
+    `</div>`
+  );
+}
+
+function toggleJsonWrap(btn) {
+  const host = btn.closest('.json-host');
+  const wrapping = host.dataset.wrap === 'on';
+  host.dataset.wrap = wrapping ? 'off' : 'on';
+  btn.textContent = wrapping ? t('json_wrap') : t('json_unwrap');
+}
+
+// Render any JSON value as syntax-highlighted HTML. Objects and arrays
+// become <details> so the user can collapse them; default-open for the
+// top two levels to mirror the prior <pre>-style overview without
+// hiding everything behind a click.
+function renderJsonTree(value, depth) {
+  if (value === null) return '<span class="jnull">null</span>';
+  if (typeof value === 'boolean') return `<span class="jb">${value}</span>`;
+  if (typeof value === 'number') return `<span class="jn">${value}</span>`;
+  if (typeof value === 'string') return `<span class="js">${esc(JSON.stringify(value))}</span>`;
+  const open = depth < 2 ? ' open' : '';
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '<span class="jp">[]</span>';
+    const inner = value
+      .map(v => `<div class="ji">${renderJsonTree(v, depth + 1)}</div>`)
+      .join(',');
+    return (
+      `<details class="jdet"${open}>` +
+        `<summary><span class="jp">[</span><span class="jcount">${value.length}</span><span class="jp">]</span></summary>` +
+        `<div class="jchildren">${inner}</div>` +
+      `</details>`
+    );
+  }
+  if (typeof value === 'object') {
+    const keys = Object.keys(value);
+    if (keys.length === 0) return '<span class="jp">{}</span>';
+    const inner = keys
+      .map(k => `<div class="ji"><span class="jk">${esc(JSON.stringify(k))}:</span> ${renderJsonTree(value[k], depth + 1)}</div>`)
+      .join(',');
+    return (
+      `<details class="jdet"${open}>` +
+        `<summary><span class="jp">{</span><span class="jcount">${keys.length}</span><span class="jp">}</span></summary>` +
+        `<div class="jchildren">${inner}</div>` +
+      `</details>`
+    );
+  }
+  return '';
+}
+
+/* ─── Syntax highlight (legacy flat renderer; still used by some paths) ─── */
 function syntaxHL(obj) {
   const s = JSON.stringify(obj, null, 2);
   let out = '', i = 0; const len = s.length;
