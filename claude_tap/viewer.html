@@ -129,11 +129,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .filter-chip:hover { border-color: var(--blue); color: var(--blue); }
 .filter-chip.active { background: var(--blue); border-color: var(--blue); color: #fff; }
 .filter-chip .chip-count { font-size: 10px; margin-left: 4px; opacity: .6; }
-.stats {
-  margin-left: auto; display: flex; gap: 16px; font-size: 12px; color: var(--text-tertiary); flex-shrink: 0;
-}
-.stats .stat-group { display: flex; align-items: center; gap: 4px; }
-.stats .stat-val { font-weight: 600; color: var(--text-secondary); font-family: var(--mono); }
+.header-spacer { flex: 1; }
 .trace-path-bar {
   display: none; align-items: center; gap: 6px; padding: 4px 12px;
   background: var(--bg); border-bottom: 1px solid var(--border);
@@ -260,11 +256,10 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   white-space: pre-wrap; word-break: break-word;
 }
 
-/* ─── Action bar ─── */
+/* ─── Action bar (buttons left, per-turn token chips right) ─── */
 .action-bar {
-  display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
   position: sticky; top: 6px; z-index: 6;
-  width: fit-content; max-width: 100%;
   margin: 0 0 8px;
   padding: 4px 6px;
   border: 1px solid var(--border);
@@ -284,6 +279,15 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .act-btn:hover { background: var(--bg-hover); color: var(--blue); }
 .act-btn:active { transform: translateY(1px); }
 .act-btn svg { width: 12px; height: 12px; }
+.tok-chips {
+  margin-left: auto; display: inline-flex; align-items: center;
+  gap: 8px; padding: 0 4px;
+}
+.tok-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-family: var(--mono);
+  color: var(--text-secondary);
+}
 [data-theme="dark"] .action-bar {
   background: rgba(22, 27, 34, 0.82);
   border-color: #3a4048;
@@ -1178,16 +1182,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   </div>
   <div class="divider"></div>
   <div class="path-filter" id="path-filter" style="display:none"></div>
-  <div class="stats" id="stats" style="display:none">
-    <div class="stat-group"><span id="label-turns">Turns</span> <span class="stat-val" id="stat-turns">0</span></div>
-    <div class="stat-group"><span id="label-tokens">Tokens</span> <span class="stat-val" id="stat-tokens">0</span></div>
-    <div class="stat-group" id="stat-input-group" style="display:none"><span style="color:var(--blue)">&#9679;</span><span>In</span> <span class="stat-val" id="stat-input">0</span></div>
-    <div class="stat-group" id="stat-output-group" style="display:none"><span style="color:var(--green)">&#9679;</span><span>Out</span> <span class="stat-val" id="stat-output">0</span></div>
-    <div class="stat-group" id="stat-cache-read-group" style="display:none"><span style="color:var(--cyan)">&#9679;</span><span>Cache R</span> <span class="stat-val" id="stat-cache-read">0</span></div>
-    <div class="stat-group" id="stat-cache-write-group" style="display:none"><span style="color:var(--amber)">&#9679;</span><span>Cache W</span> <span class="stat-val" id="stat-cache-write">0</span></div>
-    <div class="stat-group"><span id="label-time">Time</span> <span class="stat-val" id="stat-duration">0s</span></div>
-    <div id="live-status" hidden></div>
-  </div>
+  <div id="live-status" hidden></div>
+  <div class="header-spacer"></div>
   <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">&#9790;</button>
   <select class="lang-select" id="lang-select" onchange="setLang(this.value)">
     <option value="en">English</option>
@@ -1588,9 +1584,6 @@ function updateStaticTexts() {
     }
   }
   document.title = t('title') + ' Viewer';
-  if (e('label-turns')) e('label-turns').textContent = t('stats_turns');
-  if (e('label-tokens')) e('label-tokens').textContent = t('stats_tokens');
-  if (e('label-time')) e('label-time').textContent = t('stats_time');
   if (e('drop-title')) e('drop-title').textContent = t('drop_title');
   if (e('drop-desc')) e('drop-desc').textContent = t('drop_desc');
   if (e('drop-btn-label')) e('drop-btn-label').textContent = t('drop_btn');
@@ -1871,7 +1864,6 @@ function renderApp(preserveDetail) {
   $('#drop-zone').hidden = true;
   $('#sidebar-wrap').hidden = false;
   $('#detail').hidden = false;
-  $('#stats').style.display = '';
   $('#path-filter').style.display = '';
   const pathCounts = {};
   entries.forEach(e => { const p = getPath(e); pathCounts[p] = (pathCounts[p] || 0) + 1; });
@@ -2037,35 +2029,6 @@ function applyFilter(preserveDetail) {
     });
   }
   filtered.sort((a, b) => (a.turn || 0) - (b.turn || 0));
-  let totalTokens = 0, totalDuration = 0;
-  let sumInput = 0, sumOutput = 0, sumCacheRead = 0, sumCacheCreate = 0;
-  filtered.forEach(e => {
-    totalDuration += e.duration_ms || 0;
-    const u = getUsage(e);
-    if (u) {
-      totalTokens += (u.input_tokens || 0) + (u.output_tokens || 0);
-      sumInput += u.input_tokens || 0;
-      sumOutput += u.output_tokens || 0;
-      sumCacheRead += u.cache_read_input_tokens || 0;
-      sumCacheCreate += u.cache_creation_input_tokens || 0;
-    }
-  });
-  $('#stat-turns').textContent = filtered.length;
-  $('#stat-tokens').textContent = totalTokens.toLocaleString();
-  $('#stat-duration').textContent = fmtDuration(totalDuration);
-  // Token breakdown in header
-  if (totalTokens > 0) {
-    $('#stat-input').textContent = sumInput.toLocaleString();
-    $('#stat-input-group').style.display = 'flex';
-    $('#stat-output').textContent = sumOutput.toLocaleString();
-    $('#stat-output-group').style.display = 'flex';
-    if (sumCacheRead) { $('#stat-cache-read').textContent = sumCacheRead.toLocaleString(); $('#stat-cache-read-group').style.display = 'flex'; }
-    else { $('#stat-cache-read-group').style.display = 'none'; }
-    if (sumCacheCreate) { $('#stat-cache-write').textContent = sumCacheCreate.toLocaleString(); $('#stat-cache-write-group').style.display = 'flex'; }
-    else { $('#stat-cache-write-group').style.display = 'none'; }
-  } else {
-    ['stat-input-group','stat-output-group','stat-cache-read-group','stat-cache-write-group'].forEach(id => $('#'+id).style.display = 'none');
-  }
   renderToolFilter();
   renderSidebar(preserveDetail);
   updatePositionIndicator();
@@ -2833,14 +2796,13 @@ function renderDetail(e) {
     html += `<div class="error-banner"><div class="eb-icon">&#9888;</div><div class="eb-content"><div class="eb-title">HTTP ${statusCode}</div><div class="eb-message">${esc(errorMessage)}</div></div></div>`;
   }
 
-  // Action bar
+  // Action bar — buttons on the left, per-turn token chips on the right.
   html += `<div class="action-bar">
     <button class="act-btn" onclick="copyRequestBody(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>${t('btn_request_json')}</button>
     <button class="act-btn" onclick="copyCurl(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>${t('btn_curl')}</button>
     <button class="act-btn" onclick="showDiff(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/><path d="M3 6h18M3 18h18" opacity=".4"/></svg>${t('btn_diff')}</button>
+    ${usage ? renderTokenChips(usage) : ''}
   </div>`;
-
-  if (usage) html += renderTokenUsage(usage);
 
   const tools = reqBody?.tools;
   if (tools && tools.length) html += section(t('section_tools'), renderTools(tools), false, null, tools.length + ' ' + t('badge_tools'));
@@ -3221,16 +3183,22 @@ function renderResponseContent(body) {
   return renderContent(body.content, 'assistant');
 }
 
-function renderTokenUsage(u) {
+// Compact token chips that live inside the action-bar (right-aligned).
+// Hides zero-valued cache columns since they're often noise.
+function renderTokenChips(u) {
   const items = [
-    { label: t('tok_input'), val: u.input_tokens || 0, color: 'var(--blue)' },
-    { label: t('tok_output'), val: u.output_tokens || 0, color: 'var(--green)' },
-    { label: t('tok_cache_read'), val: u.cache_read_input_tokens || 0, color: 'var(--cyan)' },
-    { label: t('tok_cache_create'), val: u.cache_creation_input_tokens || 0, color: 'var(--amber)' },
+    { label: t('tok_input'), val: u.input_tokens || 0, color: 'var(--blue)', hideIfZero: false },
+    { label: t('tok_output'), val: u.output_tokens || 0, color: 'var(--green)', hideIfZero: false },
+    { label: t('tok_cache_read'), val: u.cache_read_input_tokens || 0, color: 'var(--cyan)', hideIfZero: true },
+    { label: t('tok_cache_create'), val: u.cache_creation_input_tokens || 0, color: 'var(--amber)', hideIfZero: true },
   ];
-  return `<div class="token-bar">${items.map(i =>
-    `<div class="tok-item"><span class="tok-dot" style="background:${i.color}"></span><span class="tok-label">${i.label}</span><span class="tok-val">${i.val.toLocaleString()}</span></div>`
-  ).join('')}</div>`;
+  const chips = items
+    .filter(i => !i.hideIfZero || i.val > 0)
+    .map(i =>
+      `<span class="tok-chip" title="${esc(i.label)}"><span class="tok-dot" style="background:${i.color}"></span><span class="tok-val">${i.val.toLocaleString()}</span></span>`
+    )
+    .join('');
+  return `<div class="tok-chips">${chips}</div>`;
 }
 
 function renderSSEEvents(events) {
