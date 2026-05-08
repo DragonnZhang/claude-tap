@@ -2914,7 +2914,10 @@ function renderContent(content, role) {
 
 function renderTools(tools) {
   return tools.map(td => {
-    const name = td.name || 'unknown', desc = td.description || '';
+    // OpenAI's Responses API built-in tools (web_search / file_search /
+    // code_interpreter / local_shell / image_generation / computer_use_*)
+    // identify themselves by ``type`` and have no ``name`` field.
+    const name = td.name || td.type || 'unknown', desc = td.description || '';
     const shortDesc = desc.split('\n')[0].substring(0, 120);
     const schema = td.input_schema || td.parameters || {};
     const props = schema.properties || {};
