@@ -405,6 +405,29 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   color: var(--text-tertiary); margin-top: 4px; line-height: 1.5;
   white-space: pre-wrap; word-break: break-word; font-size: 12px;
 }
+.tb-penum {
+  font-size: 10px; font-family: var(--mono); color: var(--cyan);
+  background: var(--cyan-bg, rgba(34, 211, 238, 0.12));
+  padding: 1px 6px; border-radius: 3px; font-weight: 500;
+}
+.tb-pformat {
+  font-size: 10px; font-family: var(--mono); color: var(--text-tertiary);
+  background: var(--bg-hover); padding: 1px 6px; border-radius: 3px;
+}
+.tb-pdefault {
+  font-size: 10px; font-family: var(--mono); color: var(--green);
+  background: var(--green-bg, rgba(34, 197, 94, 0.12));
+  padding: 1px 6px; border-radius: 3px;
+}
+.tb-pchildren {
+  margin-top: 6px; padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+.tb-pchild-label {
+  font-size: 10px; color: var(--text-tertiary); font-family: var(--mono);
+  text-transform: uppercase; letter-spacing: .3px;
+  margin: 4px 0 4px;
+}
 
 /* ─── Token usage ─── */
 .token-bar { display: flex; gap: 12px; font-size: 11px; padding: 4px 0 6px; flex-wrap: wrap; margin-bottom: 4px; }
@@ -2959,27 +2982,84 @@ function renderContent(content, role) {
 
 function renderTools(tools) {
   return tools.map(td => {
-    // OpenAI's Responses API built-in tools (web_search / file_search /
-    // code_interpreter / local_shell / image_generation / computer_use_*)
-    // identify themselves by ``type`` and have no ``name`` field.
+    // OpenAI Responses API built-in tools (web_search / file_search /
+    // code_interpreter / ...) identify by ``type`` and have no ``name``.
     const name = td.name || td.type || 'unknown', desc = td.description || '';
     const shortDesc = desc.split('\n')[0].substring(0, 120);
     const schema = td.input_schema || td.parameters || {};
     const props = schema.properties || {};
     const required = new Set(schema.required || []);
-    let paramsHtml = '';
     const keys = Object.keys(props);
+    let paramsHtml = '';
     if (keys.length) {
-      paramsHtml = `<div class="tb-params-title">${t('params')}</div>` + keys.map(k => {
-        const p = props[k], type = p.type || (p.enum ? 'enum' : ''), pdesc = p.description || '';
-        const req = required.has(k) ? `<span class="tb-prequired">${t('required')}</span>` : '';
-        const typeTag = type ? `<span class="tb-ptype">${esc(type)}</span>` : '';
-        const descLine = pdesc ? `<div class="tb-pdesc">${esc(pdesc)}</div>` : '';
-        return `<div class="tb-param"><div class="tb-param-row1"><span class="tb-pname">${esc(k)}</span>${typeTag}${req}</div>${descLine}</div>`;
-      }).join('');
+      paramsHtml = `<div class="tb-params-title">${t('params')}</div>` +
+        keys.map(k => renderToolParam(k, props[k], required.has(k))).join('');
     }
     return `<div class="tool-block"><div class="tool-block-header"><span class="tb-arrow">&#9654;</span><span class="tb-name">${esc(name)}</span><span class="tb-desc">${esc(shortDesc)}</span></div><div class="tool-block-body">${desc ? `<div class="tb-full-desc">${esc(desc)}</div>` : ''}${paramsHtml}</div></div>`;
   }).join('');
+}
+
+// Recursive: param row + nested children for object.properties /
+// array.items.properties. Also renders enum / default / format hints
+// that the previous flat renderer dropped.
+function renderToolParam(name, schema, isRequired, depth = 0) {
+  if (!schema || typeof schema !== 'object') return '';
+  if (depth > 6) return '';  // sanity cap on pathological schemas
+
+  const typeLabel = formatSchemaType(schema);
+  const desc = schema.description || '';
+  const tags = [];
+  if (typeLabel) tags.push(`<span class="tb-ptype">${esc(typeLabel)}</span>`);
+  if (Array.isArray(schema.enum)) {
+    const vals = schema.enum.map(v => (typeof v === 'string' ? v : JSON.stringify(v))).join(' | ');
+    tags.push(`<span class="tb-penum" title="enum">${esc(vals)}</span>`);
+  }
+  if (schema.format) tags.push(`<span class="tb-pformat">${esc(schema.format)}</span>`);
+  if (isRequired) tags.push(`<span class="tb-prequired">${t('required')}</span>`);
+  if (schema.default !== undefined) {
+    tags.push(`<span class="tb-pdefault">default: ${esc(JSON.stringify(schema.default))}</span>`);
+  }
+
+  const descLine = desc ? `<div class="tb-pdesc">${esc(desc)}</div>` : '';
+
+  let nested = '';
+  if (schema.type === 'object' && schema.properties && typeof schema.properties === 'object') {
+    const innerReq = new Set(schema.required || []);
+    const inner = Object.keys(schema.properties);
+    if (inner.length) {
+      nested = '<div class="tb-pchildren">' +
+        inner.map(k => renderToolParam(k, schema.properties[k], innerReq.has(k), depth + 1)).join('') +
+        '</div>';
+    }
+  } else if (schema.type === 'array' && schema.items && typeof schema.items === 'object') {
+    const items = schema.items;
+    if (items.type === 'object' && items.properties) {
+      const innerReq = new Set(items.required || []);
+      const inner = Object.keys(items.properties);
+      nested = '<div class="tb-pchildren"><div class="tb-pchild-label">items</div>' +
+        inner.map(k => renderToolParam(k, items.properties[k], innerReq.has(k), depth + 1)).join('') +
+        '</div>';
+    } else {
+      const itemDesc = items.description ? `: ${esc(items.description)}` : '';
+      nested = `<div class="tb-pchildren"><div class="tb-pchild-label">items ${esc(formatSchemaType(items))}${itemDesc}</div></div>`;
+    }
+  }
+
+  return `<div class="tb-param"><div class="tb-param-row1"><span class="tb-pname">${esc(name)}</span>${tags.join('')}</div>${descLine}${nested}</div>`;
+}
+
+function formatSchemaType(schema) {
+  if (!schema || typeof schema !== 'object') return '';
+  if (Array.isArray(schema.type)) return schema.type.join(' | ');
+  if (schema.type === 'array') {
+    const inner = schema.items?.type;
+    return inner ? `array<${Array.isArray(inner) ? inner.join('|') : inner}>` : 'array';
+  }
+  if (schema.type) return schema.type;
+  if (Array.isArray(schema.enum)) return 'enum';
+  if (schema.oneOf) return 'oneOf';
+  if (schema.anyOf) return 'anyOf';
+  return '';
 }
 
 function renderResponseContent(body) {
