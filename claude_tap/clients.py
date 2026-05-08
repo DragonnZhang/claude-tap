@@ -189,20 +189,37 @@ def _codex_configured(env: Mapping[str, str]) -> str | None:
 
 
 def _codex_cli_args(proxy_url: str, env: Mapping[str, str]) -> list[str]:
-    """Codex ignores ``OPENAI_BASE_URL`` env. Built-in provider IDs
-    (``openai`` / ``azure`` / ``oss``) cannot be redirected via
-    ``[model_providers.openai]`` (codex rejects that as reserved). We use
-    the top-level ``openai_base_url`` config field for the built-in path,
-    and ``model_providers.<id>.base_url`` only for user-defined providers.
+    """Build ``-c`` overrides that send codex's ``/v1/responses`` traffic
+    through the proxy *and* force HTTP+SSE instead of the WebSocket
+    transport. WS is opaque to per-turn capture: codex keeps one socket
+    open for the entire session and uses ``previous_response_id`` so
+    successive requests don't re-send conversation history. Forcing HTTP
+    gives one trace record per request with the body intact.
+
+    Built-in provider IDs (``openai`` / ``azure`` / ``oss``) are reserved
+    and cannot be overridden by a same-named ``[model_providers.X]`` block,
+    so for the built-in path we define a sibling custom provider
+    (``claude-tap-openai``) that inherits OpenAI auth via
+    ``requires_openai_auth = true``.
     """
     cfg = _read_toml(Path.home() / ".codex" / "config.toml") or {}
     active = cfg.get("model_provider") if isinstance(cfg.get("model_provider"), str) else None
     providers = cfg.get("model_providers") if isinstance(cfg.get("model_providers"), dict) else {}
 
     if active and active in providers:
-        return ["-c", f'model_providers.{active}.base_url="{proxy_url}/v1"']
+        return [
+            "-c", f'model_providers.{active}.base_url="{proxy_url}/v1"',
+            "-c", f"model_providers.{active}.supports_websockets=false",
+        ]
 
-    return ["-c", f'openai_base_url="{proxy_url}/v1"']
+    return [
+        "-c", 'model_provider="claude-tap-openai"',
+        "-c", 'model_providers.claude-tap-openai.name="claude-tap"',
+        "-c", f'model_providers.claude-tap-openai.base_url="{proxy_url}/v1"',
+        "-c", 'model_providers.claude-tap-openai.wire_api="responses"',
+        "-c", "model_providers.claude-tap-openai.requires_openai_auth=true",
+        "-c", "model_providers.claude-tap-openai.supports_websockets=false",
+    ]
 
 
 def _codex_auth() -> AuthInfo:

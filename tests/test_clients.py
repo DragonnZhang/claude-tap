@@ -77,17 +77,26 @@ def test_codex_has_no_env_overrides_only_cli_args():
     assert clients.get("codex").env_overrides("http://127.0.0.1:8080") == {}
 
 
-def test_codex_cli_args_uses_openai_base_url_for_builtin_provider(fake_home: Path):
-    """Built-in ``openai`` provider can only be redirected via the top-level
-    ``openai_base_url`` field. ``[model_providers.openai]`` is reserved and
-    codex rejects same-named overrides."""
+def test_codex_cli_args_define_sibling_provider_for_builtin(fake_home: Path):
+    """Built-in ``openai`` provider has ``supports_websockets = true``
+    hard-coded and can't be overridden by name. We define a sibling
+    provider so we can disable WS (which is opaque to per-turn tracing
+    because codex keeps one socket open across the session)."""
     args = clients.get("codex").cli_args_overrides("http://127.0.0.1:9000", {})
-    assert args == ["-c", 'openai_base_url="http://127.0.0.1:9000/v1"']
+    assert args == [
+        "-c", 'model_provider="claude-tap-openai"',
+        "-c", 'model_providers.claude-tap-openai.name="claude-tap"',
+        "-c", 'model_providers.claude-tap-openai.base_url="http://127.0.0.1:9000/v1"',
+        "-c", 'model_providers.claude-tap-openai.wire_api="responses"',
+        "-c", "model_providers.claude-tap-openai.requires_openai_auth=true",
+        "-c", "model_providers.claude-tap-openai.supports_websockets=false",
+    ]
 
 
-def test_codex_cli_args_minimal_swap_for_user_provider(fake_home: Path):
-    """User's custom provider already has ``name`` / ``wire_api`` in the
-    file — we only need to swap the URL, leaving everything else intact."""
+def test_codex_cli_args_extends_user_provider_with_ws_disable(fake_home: Path):
+    """User's custom provider keeps its ``name`` / ``wire_api`` etc. We
+    only swap the URL and force ``supports_websockets = false`` for clean
+    per-turn traces."""
     cfg = fake_home / ".codex" / "config.toml"
     cfg.parent.mkdir(parents=True)
     cfg.write_text(
@@ -99,7 +108,10 @@ def test_codex_cli_args_minimal_swap_for_user_provider(fake_home: Path):
         encoding="utf-8",
     )
     args = clients.get("codex").cli_args_overrides("http://127.0.0.1:9000", {})
-    assert args == ["-c", 'model_providers.my-relay.base_url="http://127.0.0.1:9000/v1"']
+    assert args == [
+        "-c", 'model_providers.my-relay.base_url="http://127.0.0.1:9000/v1"',
+        "-c", "model_providers.my-relay.supports_websockets=false",
+    ]
 
 
 def test_opencode_env_redirects_all_three_backends():
