@@ -1152,6 +1152,10 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 <script>
 const $ = s => document.querySelector(s);
 let entries = [], filtered = [], activeIdx = -1, activePaths = new Set(), searchQuery = '', activeTools = null;
+// Path-filter chips auto-track every path until the user clicks one. Live mode
+// brings new paths in over time (e.g. /v1/responses arriving after /v1/models),
+// and without this flag those late paths would be silently filtered out.
+let userTouchedPathFilter = false;
 let visualOrder = []; // filtered indices in sidebar visual (DOM) order, excludes collapsed items
 
 /* ─── Lazy loading infrastructure ─── */
@@ -1771,8 +1775,10 @@ function renderApp(preserveDetail) {
   const pathCounts = {};
   entries.forEach(e => { const p = getPath(e); pathCounts[p] = (pathCounts[p] || 0) + 1; });
   const paths = Object.keys(pathCounts).sort();
-  if (activePaths.size === 0) {
-    /* Few paths: activate all; many paths: activate only primary */
+  if (!userTouchedPathFilter) {
+    /* Auto-mode: re-derive on every render so new paths from live records
+       get included. Few paths → activate all; many paths → only primary. */
+    activePaths = new Set();
     const primaryPaths = paths.filter(isPathPrimary);
     if (paths.length <= 5 || primaryPaths.length === 0) paths.forEach(p => activePaths.add(p));
     else primaryPaths.forEach(p => activePaths.add(p));
@@ -1909,6 +1915,7 @@ function makeFilterChip(p, count) {
   chip.innerHTML = `<span title="${esc(p)}">${esc(label)}</span><span class="chip-count">${count}</span>`;
   chip.title = p;
   chip.onclick = () => {
+    userTouchedPathFilter = true;
     if (activePaths.has(p)) activePaths.delete(p); else activePaths.add(p);
     if (activePaths.size === 0) activePaths.add(p);
     chip.classList.toggle('active');
