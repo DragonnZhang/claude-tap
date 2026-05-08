@@ -202,11 +202,17 @@ def _add_viewer_options(parser: argparse.ArgumentParser) -> None:
     # (on for interactive ``run``, off for piped / CI / ``proxy``). Use
     # ``-L`` to force on or ``--no-live`` to force off.
     parser.add_argument(
-        "-L", "--live", dest="live", action="store_true", default=None,
+        "-L",
+        "--live",
+        dest="live",
+        action="store_true",
+        default=None,
         help="force the real-time viewer on (overrides smart default)",
     )
     parser.add_argument(
-        "--no-live", dest="live", action="store_false",
+        "--no-live",
+        dest="live",
+        action="store_false",
         help="force the real-time viewer off (overrides smart default)",
     )
     parser.add_argument("--live-port", type=int, default=0, help="live viewer port (default: auto)")

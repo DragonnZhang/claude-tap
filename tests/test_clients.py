@@ -84,12 +84,18 @@ def test_codex_cli_args_define_sibling_provider_for_builtin(fake_home: Path):
     because codex keeps one socket open across the session)."""
     args = clients.get("codex").cli_args_overrides("http://127.0.0.1:9000", {})
     assert args == [
-        "-c", 'model_provider="claude-tap-openai"',
-        "-c", 'model_providers.claude-tap-openai.name="claude-tap"',
-        "-c", 'model_providers.claude-tap-openai.base_url="http://127.0.0.1:9000/v1"',
-        "-c", 'model_providers.claude-tap-openai.wire_api="responses"',
-        "-c", "model_providers.claude-tap-openai.requires_openai_auth=true",
-        "-c", "model_providers.claude-tap-openai.supports_websockets=false",
+        "-c",
+        'model_provider="claude-tap-openai"',
+        "-c",
+        'model_providers.claude-tap-openai.name="claude-tap"',
+        "-c",
+        'model_providers.claude-tap-openai.base_url="http://127.0.0.1:9000/v1"',
+        "-c",
+        'model_providers.claude-tap-openai.wire_api="responses"',
+        "-c",
+        "model_providers.claude-tap-openai.requires_openai_auth=true",
+        "-c",
+        "model_providers.claude-tap-openai.supports_websockets=false",
     ]
 
 
@@ -101,7 +107,7 @@ def test_codex_cli_args_extends_user_provider_with_ws_disable(fake_home: Path):
     cfg.parent.mkdir(parents=True)
     cfg.write_text(
         'model_provider = "my-relay"\n'
-        '[model_providers.my-relay]\n'
+        "[model_providers.my-relay]\n"
         'name = "My Relay"\n'
         'base_url = "https://relay.example.com/v1"\n'
         'wire_api = "chat_completions"\n',
@@ -109,8 +115,10 @@ def test_codex_cli_args_extends_user_provider_with_ws_disable(fake_home: Path):
     )
     args = clients.get("codex").cli_args_overrides("http://127.0.0.1:9000", {})
     assert args == [
-        "-c", 'model_providers.my-relay.base_url="http://127.0.0.1:9000/v1"',
-        "-c", "model_providers.my-relay.supports_websockets=false",
+        "-c",
+        'model_providers.my-relay.base_url="http://127.0.0.1:9000/v1"',
+        "-c",
+        "model_providers.my-relay.supports_websockets=false",
     ]
 
 
@@ -172,7 +180,7 @@ def test_codex_configured_reads_active_provider_base_url(fake_home: Path):
     cfg.parent.mkdir(parents=True)
     cfg.write_text(
         'model_provider = "my-relay"\n'
-        '[model_providers.my-relay]\n'
+        "[model_providers.my-relay]\n"
         'base_url = "https://relay.example.com/v1"\n'
         'wire_api = "responses"\n',
         encoding="utf-8",
@@ -221,13 +229,13 @@ def test_kimi_configured_resolves_default_model_to_provider_base_url(fake_home: 
     cfg.parent.mkdir(parents=True)
     cfg.write_text(
         'default_model = "kimi-k2-thinking"\n'
-        '\n'
-        '[providers.moonshot]\n'
+        "\n"
+        "[providers.moonshot]\n"
         'type = "openai_responses"\n'
         'base_url = "https://api.moonshot.cn/v1"\n'
         'api_key = "sk-..."\n'
-        '\n'
-        '[models.kimi-k2-thinking]\n'
+        "\n"
+        "[models.kimi-k2-thinking]\n"
         'provider = "moonshot"\n'
         'model = "kimi-k2-thinking"\n',
         encoding="utf-8",
@@ -352,10 +360,7 @@ def test_hermes_configured_config_wins_for_custom_provider(fake_home: Path):
     cfg = fake_home / ".hermes" / "config.yaml"
     cfg.parent.mkdir(parents=True)
     cfg.write_text(
-        "model:\n"
-        "  default: my-model\n"
-        "  provider: custom\n"
-        "  base_url: https://my-relay.example.com\n",
+        "model:\n  default: my-model\n  provider: custom\n  base_url: https://my-relay.example.com\n",
         encoding="utf-8",
     )
     assert clients.get("hermes").read_configured_upstream({}) == "https://my-relay.example.com"
@@ -369,20 +374,14 @@ def test_hermes_configured_returns_none_for_empty_base_url(fake_home: Path):
 
 
 def test_cursor_configured_reads_env():
-    assert (
-        clients.get("cursor").read_configured_upstream({"CURSOR_API_BASE_URL": "https://x"})
-        == "https://x"
-    )
+    assert clients.get("cursor").read_configured_upstream({"CURSOR_API_BASE_URL": "https://x"}) == "https://x"
     assert clients.get("cursor").read_configured_upstream({}) is None
 
 
 def test_qoder_configured_adds_https_scheme():
     """QODER_CENTER_DOMAIN is stored without scheme; we re-attach it for our
     target so the proxy knows where to forward."""
-    assert (
-        clients.get("qoder").read_configured_upstream({"QODER_CENTER_DOMAIN": "qoder.com"})
-        == "https://qoder.com"
-    )
+    assert clients.get("qoder").read_configured_upstream({"QODER_CENTER_DOMAIN": "qoder.com"}) == "https://qoder.com"
 
 
 def test_devin_has_no_configured_upstream():

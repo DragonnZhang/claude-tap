@@ -34,9 +34,7 @@ from claude_tap.trace import EventBus, JsonlSink
 pytestmark = pytest.mark.asyncio
 
 
-async def _start_https_upstream(
-    ca: CertificateAuthority, hostname: str
-) -> tuple[web.AppRunner, int, list[dict]]:
+async def _start_https_upstream(ca: CertificateAuthority, hostname: str) -> tuple[web.AppRunner, int, list[dict]]:
     """Start a TLS upstream that records every request it sees."""
     received: list[dict] = []
 
@@ -46,9 +44,7 @@ async def _start_https_upstream(
             payload = json.loads(body)
         except Exception:
             payload = None
-        received.append(
-            {"path": request.path, "host": request.host, "body": payload}
-        )
+        received.append({"path": request.path, "host": request.host, "body": payload})
         return web.json_response(
             {
                 "id": "msg_fwd",
@@ -112,14 +108,16 @@ async def test_forward_proxy_uses_connect_host_not_ctx_target(trace_dir: Path):
     class FakeResolver(aiohttp.abc.AbstractResolver):
         async def resolve(self, host: str, port: int = 0, family: int = socket.AF_INET):
             if host == fake_host:
-                return [{
-                    "hostname": host,
-                    "host": "127.0.0.1",
-                    "port": upstream_port,
-                    "family": socket.AF_INET,
-                    "proto": 0,
-                    "flags": 0,
-                }]
+                return [
+                    {
+                        "hostname": host,
+                        "host": "127.0.0.1",
+                        "port": upstream_port,
+                        "family": socket.AF_INET,
+                        "proto": 0,
+                        "flags": 0,
+                    }
+                ]
             return []
 
         async def close(self) -> None:
@@ -270,14 +268,16 @@ async def test_forward_proxy_streams_and_reassembles(trace_dir: Path):
     class FakeResolver(aiohttp.abc.AbstractResolver):
         async def resolve(self, host: str, port: int = 0, family: int = socket.AF_INET):
             if host == fake_host:
-                return [{
-                    "hostname": host,
-                    "host": "127.0.0.1",
-                    "port": upstream_port,
-                    "family": socket.AF_INET,
-                    "proto": 0,
-                    "flags": 0,
-                }]
+                return [
+                    {
+                        "hostname": host,
+                        "host": "127.0.0.1",
+                        "port": upstream_port,
+                        "family": socket.AF_INET,
+                        "proto": 0,
+                        "flags": 0,
+                    }
+                ]
             return []
 
         async def close(self) -> None:

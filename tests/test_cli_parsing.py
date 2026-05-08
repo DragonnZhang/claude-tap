@@ -245,9 +245,7 @@ def test_resolve_codex_reads_user_provider_from_toml(fake_home: Path):
     cfg = fake_home / ".codex" / "config.toml"
     cfg.parent.mkdir(parents=True)
     cfg.write_text(
-        'model_provider = "my-relay"\n'
-        '[model_providers.my-relay]\n'
-        'base_url = "https://relay.example.com/v1"\n',
+        'model_provider = "my-relay"\n[model_providers.my-relay]\nbase_url = "https://relay.example.com/v1"\n',
         encoding="utf-8",
     )
     codex = clients_mod.get("codex")
@@ -273,9 +271,7 @@ def test_resolve_config_driven_clients_force_forward_mode(fake_home: Path):
         client = clients_mod.get(name)
         _, _, mode = resolve_target_and_mode(
             client=client,
-            auth=clients_mod.AuthInfo(
-                logged_in=True, mode="apikey", suggested_target="https://x.example.com"
-            ),
+            auth=clients_mod.AuthInfo(logged_in=True, mode="apikey", suggested_target="https://x.example.com"),
             explicit_target=None,
             explicit_mode=None,
             env={},
@@ -291,9 +287,7 @@ def test_resolve_single_backend_clients_use_reverse(fake_home: Path):
         client = clients_mod.get(name)
         _, _, mode = resolve_target_and_mode(
             client=client,
-            auth=clients_mod.AuthInfo(
-                logged_in=True, mode="apikey", suggested_target="https://x.example.com"
-            ),
+            auth=clients_mod.AuthInfo(logged_in=True, mode="apikey", suggested_target="https://x.example.com"),
             explicit_target=None,
             explicit_mode=None,
             env={},
@@ -322,6 +316,7 @@ def test_resolve_explicit_mode_always_honored(fake_home: Path):
 
 class _Args:
     """Minimal argparse.Namespace stand-in for resolver tests."""
+
     def __init__(self, *, live):
         self.live = live
 

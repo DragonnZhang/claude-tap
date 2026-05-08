@@ -208,17 +208,25 @@ def _codex_cli_args(proxy_url: str, env: Mapping[str, str]) -> list[str]:
 
     if active and active in providers:
         return [
-            "-c", f'model_providers.{active}.base_url="{proxy_url}/v1"',
-            "-c", f"model_providers.{active}.supports_websockets=false",
+            "-c",
+            f'model_providers.{active}.base_url="{proxy_url}/v1"',
+            "-c",
+            f"model_providers.{active}.supports_websockets=false",
         ]
 
     return [
-        "-c", 'model_provider="claude-tap-openai"',
-        "-c", 'model_providers.claude-tap-openai.name="claude-tap"',
-        "-c", f'model_providers.claude-tap-openai.base_url="{proxy_url}/v1"',
-        "-c", 'model_providers.claude-tap-openai.wire_api="responses"',
-        "-c", "model_providers.claude-tap-openai.requires_openai_auth=true",
-        "-c", "model_providers.claude-tap-openai.supports_websockets=false",
+        "-c",
+        'model_provider="claude-tap-openai"',
+        "-c",
+        'model_providers.claude-tap-openai.name="claude-tap"',
+        "-c",
+        f'model_providers.claude-tap-openai.base_url="{proxy_url}/v1"',
+        "-c",
+        'model_providers.claude-tap-openai.wire_api="responses"',
+        "-c",
+        "model_providers.claude-tap-openai.requires_openai_auth=true",
+        "-c",
+        "model_providers.claude-tap-openai.supports_websockets=false",
     ]
 
 

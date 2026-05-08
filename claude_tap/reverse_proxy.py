@@ -405,5 +405,3 @@ def _is_turn_terminal_event(msg_data: str) -> bool:
         t = d.get("type")
         return t in ("response.completed", "response.done")
     return False
-
-
