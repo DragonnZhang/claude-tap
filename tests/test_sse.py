@@ -233,3 +233,39 @@ def test_openai_reassembler_response_completed():
     snap = r.reconstruct() or {}
     assert snap["id"] == "resp_1"
     assert snap["usage"]["input_tokens"] == 3
+
+
+def test_openai_reassembler_collects_items_from_output_item_done():
+    """Codex's ``response.completed.response.output`` is empty; the actual
+    items (messages + function_calls) arrive as ``response.output_item.done``
+    frames. Reconstruct() must splice them into the empty output."""
+    chunks = [
+        b'event: response.created\ndata: {"type":"response.created","response":{"id":"r","output":[]}}\n\n',
+        b'event: response.output_item.done\ndata: {"type":"response.output_item.done","item":{"type":"function_call","name":"update_plan","arguments":"{}"}}\n\n',
+        b'event: response.output_item.done\ndata: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}\n\n',
+        b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"r","output":[]}}\n\n',
+    ]
+    r = OpenAIReassembler()
+    for c in chunks:
+        r.feed_bytes(c)
+    snap = r.reconstruct() or {}
+    assert len(snap["output"]) == 2
+    assert snap["output"][0]["type"] == "function_call"
+    assert snap["output"][0]["name"] == "update_plan"
+    assert snap["output"][1]["type"] == "message"
+    assert snap["output"][1]["content"][0]["text"] == "done"
+
+
+def test_openai_reassembler_does_not_overwrite_populated_output():
+    """If the upstream did populate ``response.output`` (non-codex behavior),
+    trust it — never replace with our accumulator."""
+    chunks = [
+        b'event: response.output_item.done\ndata: {"type":"response.output_item.done","item":{"type":"function_call","name":"streamed"}}\n\n',
+        b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"r","output":[{"type":"function_call","name":"final"}]}}\n\n',
+    ]
+    r = OpenAIReassembler()
+    for c in chunks:
+        r.feed_bytes(c)
+    snap = r.reconstruct() or {}
+    assert len(snap["output"]) == 1
+    assert snap["output"][0]["name"] == "final"

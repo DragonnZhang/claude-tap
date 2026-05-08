@@ -146,6 +146,47 @@ def test_build_ws_record_extracts_response_completed():
     assert len(r["response"]["ws_events"]) == 2
 
 
+def test_build_ws_record_fills_empty_output_from_output_item_done():
+    """Codex leaves ``response.completed.response.output`` empty and
+    streams items via ``response.output_item.done``; merge them in."""
+    r = build_ws_record(
+        request_id="req",
+        turn=1,
+        duration_ms=1,
+        path="/v1/responses",
+        req_headers={},
+        client_messages=[],
+        server_messages=[
+            '{"type":"response.created","response":{"id":"r","output":[]}}',
+            '{"type":"response.output_item.done","item":{"type":"function_call","name":"update_plan"}}',
+            '{"type":"response.completed","response":{"id":"r","output":[]}}',
+        ],
+        upstream_base_url="wss://x",
+    )
+    out = r["response"]["body"]["output"]
+    assert len(out) == 1
+    assert out[0]["name"] == "update_plan"
+
+
+def test_build_ws_record_does_not_overwrite_populated_output():
+    r = build_ws_record(
+        request_id="req",
+        turn=1,
+        duration_ms=1,
+        path="/v1/responses",
+        req_headers={},
+        client_messages=[],
+        server_messages=[
+            '{"type":"response.output_item.done","item":{"type":"function_call","name":"streamed"}}',
+            '{"type":"response.completed","response":{"id":"r","output":[{"type":"function_call","name":"final"}]}}',
+        ],
+        upstream_base_url="wss://x",
+    )
+    out = r["response"]["body"]["output"]
+    assert len(out) == 1
+    assert out[0]["name"] == "final"
+
+
 # --- _is_turn_terminal_event (drives per-turn live publish) ---------------
 
 

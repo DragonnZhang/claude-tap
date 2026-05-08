@@ -149,17 +149,33 @@ class AnthropicReassembler(_BaseReassembler):
 
 
 class OpenAIReassembler(_BaseReassembler):
-    """Reassemble OpenAI Responses API streaming events."""
+    """Reassemble OpenAI Responses API streaming events.
+
+    Output items (messages, function_calls, reasoning) arrive as
+    ``response.output_item.done`` frames. Codex's ``response.completed``
+    leaves ``response.output`` empty, so we collect items separately and
+    splice them into the snapshot when ``output`` is empty.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self._snapshot: dict | None = None
+        self._items: list[dict] = []
 
     def reconstruct(self) -> dict | None:
+        if self._snapshot is None:
+            return None
+        if self._items and not self._snapshot.get("output"):
+            self._snapshot["output"] = list(self._items)
         return self._snapshot
 
     def _accumulate(self, event_type: str, data: object) -> None:
         if not isinstance(data, dict):
+            return
+        if event_type == "response.output_item.done":
+            item = data.get("item")
+            if isinstance(item, dict):
+                self._items.append(copy.deepcopy(item))
             return
         if event_type in ("response.created", "response.completed", "response.done"):
             response = data.get("response")

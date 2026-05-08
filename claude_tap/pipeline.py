@@ -157,11 +157,19 @@ def build_ws_record(
 
     ws_events: list[dict] = []
     resp_body: object = None
+    output_items: list[dict] = []
     for msg in server_messages:
         try:
             parsed = json.loads(msg)
             ws_events.append(parsed)
-            if isinstance(parsed, dict) and parsed.get("type") in ("response.completed", "response.done"):
+            if not isinstance(parsed, dict):
+                continue
+            evt = parsed.get("type")
+            if evt == "response.output_item.done":
+                item = parsed.get("item")
+                if isinstance(item, dict):
+                    output_items.append(item)
+            elif evt in ("response.completed", "response.done"):
                 resp_body = parsed.get("response", parsed)
         except (json.JSONDecodeError, ValueError):
             ws_events.append({"raw": msg})
@@ -171,6 +179,9 @@ def build_ws_record(
             if isinstance(ev, dict) and ev.get("type") == "response.created":
                 resp_body = ev.get("response", ev)
                 break
+
+    if isinstance(resp_body, dict) and output_items and not resp_body.get("output"):
+        resp_body["output"] = output_items
 
     record: dict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
