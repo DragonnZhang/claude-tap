@@ -2795,27 +2795,65 @@ function getEventData(event) {
   return data && typeof data === 'object' ? data : null;
 }
 
-// Normalize messages from Chat Completions (body.messages) or Responses API (body.input)
+// Normalize messages from Chat Completions (body.messages) or Responses API
+// (body.input). Responses API mixes message / reasoning / function_call /
+// function_call_output items in one array — convert each into the message+
+// content-blocks shape that renderContent understands.
 function getMessages(body) {
   if (!body) return [];
   if (Array.isArray(body.messages) && body.messages.length > 0) return body.messages;
-  if (Array.isArray(body.input)) {
-    return body.input.filter(item => {
-      if (!item || typeof item !== 'object') return false;
-      if (typeof item.role !== 'string' || !item.role) return false;
-      return item.type === undefined || item.type === 'message';
-    }).map(item => ({
-      role: item.role || 'user',
+  if (!Array.isArray(body.input)) return [];
+
+  const out = [];
+  for (const item of body.input) {
+    if (!item || typeof item !== 'object') continue;
+    const t = item.type;
+
+    if (t === 'function_call') {
+      let input = {};
+      if (item.arguments) {
+        if (typeof item.arguments === 'string') {
+          try { input = JSON.parse(item.arguments); } catch (_) { input = item.arguments; }
+        } else { input = item.arguments; }
+      }
+      out.push({
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: item.call_id, name: item.name, input }],
+      });
+      continue;
+    }
+
+    if (t === 'function_call_output') {
+      out.push({
+        role: 'tool',
+        content: [{ type: 'tool_result', tool_use_id: item.call_id, content: item.output }],
+      });
+      continue;
+    }
+
+    if (t === 'reasoning') {
+      const s = item.summary;
+      const text = Array.isArray(s) ? s.map(p => p?.text || '').join('\n') : (s?.text || '');
+      if (text.trim()) {
+        out.push({ role: 'assistant', content: [{ type: 'thinking', thinking: text }] });
+      }
+      continue;
+    }
+
+    // message (explicit type or legacy {role, content} only)
+    if (typeof item.role !== 'string' || !item.role) continue;
+    out.push({
+      role: item.role,
       content: Array.isArray(item.content)
         ? item.content.map(c => {
             if (!c || typeof c !== 'object') return c;
             if (c.type === 'input_text' || c.type === 'output_text' || c.type === 'text') return { type: 'text', text: c.text };
             return c;
           })
-        : item.content
-    }));
+        : item.content,
+    });
   }
-  return [];
+  return out;
 }
 
 // Extract token usage from response.body.usage or SSE response.completed event
