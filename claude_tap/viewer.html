@@ -266,7 +266,12 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 }
 
 /* ─── Detail ─── */
-.detail { flex: 1; overflow-y: auto; padding: 12px 20px; background: var(--bg); }
+.detail { flex: 1; overflow-y: auto; padding: 0 20px 12px; background: var(--bg); }
+/* The visual top spacing lives on the first child, not as .detail
+   padding, so a sticky section header pins flush against the scroll
+   container's top edge instead of leaving a gap above the pinned bar
+   that prior content scrolls through. */
+.detail > *:first-child { margin-top: 12px; }
 .detail::-webkit-scrollbar { width: 6px; }
 .detail::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 .error-banner {
@@ -990,7 +995,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 
 @media (max-width: 900px) {
   .sidebar { width: 240px; min-width: 200px; }
-  .detail { padding: 16px; }
+  .detail { padding: 0 16px 16px; }
+  .detail > *:first-child { margin-top: 16px; }
 }
 
 /* Mobile back button hidden by default on desktop */
