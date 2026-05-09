@@ -2494,16 +2494,25 @@ const TASK_COLORS = [
 ];
 const taskFingerprintCache = new Map();
 
-// Substring → label rules; first match wins. Add new agents here.
+// Substring → label rules. The system prompt (lowercased) is matched
+// against each ``needle`` in order; first hit wins. Each needle should be
+// a phrase that ONLY the target agent emits — generic words like "bash"
+// or "explore" appear in every CLI's tool descriptions and would
+// false-positive everything else.
+//
+// Verified against real traces; add new entries with the same standard
+// (cite the trace file you pulled the phrase from).
 const TASK_LABEL_RULES = [
-  ['claude code', 'Claude Code'],
-  ['you are codex', 'Codex'],
-  ['openclaw', 'OpenClaw'],
-  ['subagent', 'Subagent'],
-  ['sub-agent', 'Subagent'],
-  ['bash', 'Bash'],
-  ['explore', 'Explore'],
-  ['plan', 'Plan'],
+  // Specific sub-tasks first, so they win over the main-agent rule below.
+  ['generate a concise, sentence-case title',  'Title gen'],   // Claude Code's session-title sub-call
+  ['summarize the conversation so far',        'Summary'],     // Claude Code session summary
+
+  // Main agents — anchored on a phrase from the very first sentence.
+  ["anthropic's claude agent sdk",             'Claude Code'], // "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+  ['cc_version=',                              'Claude Code'], // billing header — always present from Claude Code
+  ['you are codex',                            'Codex'],       // "You are Codex, a coding agent based on GPT-5."
+  ['non-interactive cli agent',                'Gemini CLI'],  // "You are a non-interactive CLI agent specializing in..."
+  ['openclaw',                                 'OpenClaw'],
 ];
 
 function getTaskFingerprint(e) {
