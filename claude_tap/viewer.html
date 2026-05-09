@@ -24,6 +24,7 @@
   --border-light: #edeef1;
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
   --shadow-md: 0 2px 8px rgba(0,0,0,0.08);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
   --radius: 10px;
   --radius-sm: 6px;
 
@@ -63,6 +64,7 @@
   --border-light: #21262d;
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
   --shadow-md: 0 2px 8px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.55);
   --text: #e6edf3;
   --text-secondary: #8b949e;
   --text-tertiary: #6e7681;
@@ -122,6 +124,12 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 }
 .header .divider { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
 .path-filter { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; flex: 1 1 0; }
+.filter-chip-errors {
+  margin-left: auto;
+}
+.filter-chip-errors.active {
+  background: var(--red-bg) !important; border-color: var(--red) !important; color: var(--red) !important;
+}
 .filter-chip-toggle {
   font-size: 11px; font-family: var(--sans); padding: 4px 10px; border-radius: 20px;
   border: 1px dashed var(--border); background: var(--bg); color: var(--text-tertiary);
@@ -219,6 +227,11 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   position: sticky; top: 0; z-index: 1;
   text-transform: uppercase; letter-spacing: .5px;
 }
+/* "Internal" / metadata group: don't shout, it's just GET /v1/models etc. */
+.sidebar-group-header.is-internal {
+  text-transform: none; letter-spacing: normal;
+  font-weight: 500; color: var(--text-tertiary);
+}
 .sidebar-group-header:hover { background: var(--bg-hover); }
 .sidebar-group-header .group-dot {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
@@ -300,13 +313,13 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   background: var(--bg-card);
 }
 .act-btn {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 11px; padding: 4px 8px; border-radius: 6px;
-  border: none; background: transparent;
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; padding: 5px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg);
   color: var(--text-secondary); cursor: pointer; font-family: var(--sans);
-  transition: all .15s;
+  transition: all .15s; line-height: 1;
 }
-.act-btn:hover { background: var(--bg-hover); color: var(--blue); }
+.act-btn:hover { background: var(--bg-hover); color: var(--blue); border-color: var(--blue); }
 .act-btn:active { transform: translateY(1px); }
 .act-btn svg { width: 12px; height: 12px; }
 .tok-chips {
@@ -1330,7 +1343,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 <div class="main" id="main-area">
   <div id="sidebar-wrap" hidden>
     <div id="session-picker" hidden>
-      <label>Session:</label>
+      <label id="label-session">Session:</label>
       <select id="session-select" onchange="onSessionChange(this.value)"></select>
     </div>
     <div class="search-bar" id="search-bar">
@@ -1340,7 +1353,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
     </div>
     <div id="tool-filter" hidden></div>
     <div class="position-indicator" id="position-indicator">
-      <span>Turn <span class="pi-current" id="pi-current">0</span> <span class="pi-total" id="pi-total">of 0</span></span>
+      <span><span id="label-turn-prefix">Turn</span> <span class="pi-current" id="pi-current">0</span> <span class="pi-total"><span id="label-turn-of">of</span> <span id="pi-total-count">0</span></span></span>
       <div class="pi-bar"><div class="pi-fill" id="pi-fill"></div></div>
     </div>
     <div class="sidebar" id="sidebar"></div>
@@ -1381,6 +1394,8 @@ let entries = [], filtered = [], activeIdx = -1, activePaths = new Set(), search
 // brings new paths in over time (e.g. /v1/responses arriving after /v1/models),
 // and without this flag those late paths would be silently filtered out.
 let userTouchedPathFilter = false;
+// Errors-only filter (set by the "Errors only" chip). Hides records with status < 400.
+let errorsOnlyFilter = false;
 let visualOrder = []; // filtered indices in sidebar visual (DOM) order, excludes collapsed items
 
 /* ─── Lazy loading infrastructure ───
@@ -1494,6 +1509,20 @@ const I18N = {
     drop_title: "Load Trace File", drop_desc: "Drag & drop a .jsonl trace file, or click to browse", drop_btn: "Choose File",
     live_waiting_title: "Waiting for API calls...", live_waiting_desc: "Use any supported AI CLI to see traces appear here in real time.",
     turn: "Turn", tok: "tok",
+    label_session: "Session:", label_of: "of",
+    find_in_trace: "Find in trace", prev: "Prev", next: "Next", close: "Close",
+    live_history_view: "Live (history view)", live_elsewhere: "Live elsewhere",
+    connecting: "Connecting…", disconnected: "Disconnected",
+    jump_to_turn: "Jump to turn:", go: "Go", cancel: "Cancel",
+    closest_turn: "closest:", jumped_to_closest: "No turn ",
+    expand_all: "Expand all", collapse_all: "Collapse all",
+    errors_only: "Errors only", copy_response_text: "Copy response text",
+    tip_request_json: "Copy request body as JSON",
+    tip_curl: "Copy as cURL command",
+    tip_diff_prev: "Diff this request against the previous one",
+    tip_json_grid: "Compact grid view",
+    tip_json_inline: "Inline (one line)",
+    tip_json_wrap: "Toggle wrap",
     btn_request_json: "Request JSON", btn_curl: "cURL", btn_diff: "Diff with Prev",
     section_system: "System Prompt", section_messages: "Messages", section_tools: "Tools",
     section_response: "Response", section_sse: "SSE Events", section_json: "Full JSON",
@@ -1527,6 +1556,20 @@ const I18N = {
     drop_title: "加载 Trace 文件", drop_desc: "拖放 .jsonl 文件到此处，或点击选择文件", drop_btn: "选择文件",
     live_waiting_title: "等待 API 请求...", live_waiting_desc: "运行任意支持的 AI CLI，请求会实时出现在这里。",
     turn: "轮次", tok: "tok",
+    label_session: "会话:", label_of: "/",
+    find_in_trace: "在 trace 中查找", prev: "上一个", next: "下一个", close: "关闭",
+    live_history_view: "实时 (历史视图)", live_elsewhere: "实时活动在别处",
+    connecting: "连接中…", disconnected: "已断开",
+    jump_to_turn: "跳转到轮次:", go: "前往", cancel: "取消",
+    closest_turn: "最近的:", jumped_to_closest: "无此轮次 ",
+    expand_all: "全部展开", collapse_all: "全部折叠",
+    errors_only: "仅错误", copy_response_text: "复制响应文本",
+    tip_request_json: "复制请求 JSON",
+    tip_curl: "复制为 cURL 命令",
+    tip_diff_prev: "与上一次请求对比",
+    tip_json_grid: "紧凑网格视图",
+    tip_json_inline: "单行展示",
+    tip_json_wrap: "切换换行",
     btn_request_json: "请求 JSON", btn_curl: "cURL", btn_diff: "对比上次",
     section_system: "系统提示词", section_messages: "消息", section_tools: "工具",
     section_response: "响应", section_sse: "SSE 事件", section_json: "完整 JSON",
@@ -1718,6 +1761,10 @@ function setLang(lang) {
   document.documentElement.lang = lang;
   $('#lang-select').value = lang;
   updateStaticTexts();
+  // Live status pill is built in JS — re-render after lang switch.
+  if (typeof updateLiveStatus === 'function' && document.getElementById('live-status')) {
+    try { updateLiveStatus(); } catch (_) {}
+  }
   if (filtered.length) { applyFilter(); selectEntry(activeIdx >= 0 ? activeIdx : 0); }
 }
 function updateStaticTexts() {
@@ -1737,6 +1784,13 @@ function updateStaticTexts() {
   if (e('drop-desc')) e('drop-desc').textContent = t('drop_desc');
   if (e('drop-btn-label')) e('drop-btn-label').textContent = t('drop_btn');
   if (e('search-input')) e('search-input').placeholder = t('search_placeholder');
+  if (e('label-session')) e('label-session').textContent = t('label_session');
+  if (e('label-turn-prefix')) e('label-turn-prefix').textContent = t('turn');
+  if (e('label-turn-of')) e('label-turn-of').textContent = t('label_of');
+  if (e('global-search-input')) e('global-search-input').placeholder = t('find_in_trace');
+  if (e('global-search-prev')) e('global-search-prev').textContent = t('prev');
+  if (e('global-search-next')) e('global-search-next').textContent = t('next');
+  if (e('global-search-close')) e('global-search-close').textContent = t('close');
 }
 
 /* ─── Theme ─── */
@@ -1937,9 +1991,9 @@ function updateLiveStatus(forcedStatus) {
     const isLive = viewingSessionId === liveCurrentSessionId;
     label = isLive
       ? `Live · ${entries.length}`
-      : (pendingNewCount > 0 ? `Live elsewhere · +${pendingNewCount}` : 'Live (history view)');
+      : (pendingNewCount > 0 ? `${t('live_elsewhere')} · +${pendingNewCount}` : t('live_history_view'));
   } else {
-    label = status === 'connecting' ? 'Connecting…' : 'Disconnected';
+    label = status === 'connecting' ? (t('connecting') || 'Connecting…') : (t('disconnected') || 'Disconnected');
   }
   el.style.background = c.bg;
   el.style.color = c.color;
@@ -2208,9 +2262,21 @@ function renderPathFilter(paths, pathCounts) {
     }
     const toggle = document.createElement('button');
     toggle.className = 'filter-chip-toggle';
+    toggle.title = pathFilterExpanded ? t('filter_less') : hiddenPaths.map(p => p).join('\n');
     toggle.textContent = pathFilterExpanded ? t('filter_less') : `+${hiddenPaths.length} ${t('filter_more')}`;
     toggle.onclick = () => { pathFilterExpanded = !pathFilterExpanded; renderPathFilter(paths, pathCounts); };
     c.appendChild(toggle);
+  }
+
+  // Errors-only toggle: only renders when at least one record is ≥400.
+  const hasErrors = entries.some(e => (getResponseStatus(e) || 0) >= 400);
+  if (hasErrors) {
+    const errBtn = document.createElement('button');
+    errBtn.className = 'filter-chip filter-chip-errors' + (errorsOnlyFilter ? ' active' : '');
+    errBtn.title = t('errors_only') || 'Errors only';
+    errBtn.innerHTML = `<span style="color:var(--red);font-weight:600">●</span> ${esc(t('errors_only') || 'Errors only')}`;
+    errBtn.onclick = () => { errorsOnlyFilter = !errorsOnlyFilter; applyFilter(); renderPathFilter(paths, pathCounts); };
+    c.appendChild(errBtn);
   }
 }
 
@@ -2235,6 +2301,7 @@ function makeFilterChip(p, count) {
 
 function applyFilter(preserveDetail) {
   filtered = entries.filter(e => activePaths.has(getPath(e)));
+  if (errorsOnlyFilter) filtered = filtered.filter(e => (getResponseStatus(e) || 0) >= 400);
   if (searchQuery) filtered = filtered.filter(e => matchSearch(e, searchQuery));
   if (activeTools) {
     filtered = filtered.filter(e => {
@@ -2784,12 +2851,18 @@ function createSidebarItem(e, i) {
   const failed = statusCode >= 400;
   item.className = 'sidebar-item' + (failed ? ' is-error' : '');
   item.dataset.idx = i;
+  // Make the row keyboard-accessible — div+click was inert to Tab/Enter.
+  item.setAttribute('role', 'button');
+  item.tabIndex = 0;
   const u = getUsage(e);
   const inTok = u?.input_tokens || 0, outTok = u?.output_tokens || 0;
   const model = e.request?.body?.model || '';
   const shortModel = model.replace(/^claude-/, '').replace(/-\d{8}$/, '');
   const badge = modelBadge(model);
-  const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+  // Format with 24h for non-English locales (the AM/PM the platform default
+  // gives is jarring in zh/ja/ko/de/fr/ru/ar locales).
+  const _timeOpts = currentLang.startsWith('en') ? undefined : { hour12: false };
+  const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleTimeString(currentLang, _timeOpts) : '';
   // Hover tooltip: full local timestamp + human-relative gap. The wall-clock
   // alone is useless when scanning a fast session — every entry shows the
   // same minute. The relative form ("3m ago") gives the actual gap.
@@ -2811,8 +2884,11 @@ function createSidebarItem(e, i) {
       <span class="si-dur">${fmtDuration(e.duration_ms || 0)}</span>
       <span class="si-time" title="${esc(timeTip)}">${esc(timeStr)}</span>
     </div>
-    <div class="si-path">${esc((e.request?.method || '') + ' ' + (e.request?.path || ''))}</div>`;
+    <div class="si-path">${esc((e.request?.method || '') + ' ' + (e.request?.path || '').replace(/^\/{2,}/, '/'))}</div>`;
   item.onclick = () => selectEntry(i);
+  item.onkeydown = (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectEntry(i); }
+  };
   return item;
 }
 
@@ -2864,7 +2940,7 @@ function renderSidebar(preserveDetail) {
       const color = isInternal ? 'var(--text-tertiary)' : modelColor(model);
       const isCollapsed = collapsedGroups.has(model);
       const header = document.createElement('div');
-      header.className = 'sidebar-group-header';
+      header.className = 'sidebar-group-header' + (isInternal ? ' is-internal' : '');
       header.innerHTML = `<span class="group-dot" style="background:${color}"></span><span class="group-name">${esc(shortModel)}</span><span class="group-count">${items.length}</span><span class="group-chevron${isCollapsed ? '' : ' open'}">&#9654;</span>`;
       const content = document.createElement('div');
       if (isCollapsed) content.style.display = 'none';
@@ -2934,7 +3010,9 @@ function updatePositionIndicator() {
   const total = filtered.length;
   const pct = total > 1 ? ((pos - 1) / (total - 1)) * 100 : 0;
   $('#pi-current').textContent = turnNum;
-  $('#pi-total').textContent = `of ${total}`;
+  // Update only the count — the "of" label is a separate i18n-aware span.
+  const countEl = document.getElementById('pi-total-count');
+  if (countEl) countEl.textContent = total;
   $('#pi-fill').style.width = pct + '%';
 }
 
@@ -3124,7 +3202,10 @@ function renderDetail(e) {
   html += `<div class="action-bar">
     <button class="act-btn" title="${t('tip_request_json')}" onclick="copyRequestBody(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>${t('btn_request_json')}</button>
     <button class="act-btn" title="${t('tip_curl')}" onclick="copyCurl(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>${t('btn_curl')}</button>
-    <button class="act-btn" title="${t('tip_diff')}" onclick="showDiff(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/><path d="M3 6h18M3 18h18" opacity=".4"/></svg>${t('btn_diff')}</button>
+    <button class="act-btn" title="${t('tip_diff_prev')}" onclick="showDiff(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/><path d="M3 6h18M3 18h18" opacity=".4"/></svg>${t('btn_diff')}</button>
+    <button class="act-btn" title="${t('copy_response_text')}" onclick="copyResponseText(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3v4a1 1 0 001 1h4"/><path d="M17 21H7a2 2 0 01-2-2V5a2 2 0 012-2h7l5 5v11a2 2 0 01-2 2z"/></svg>${t('copy_response_text') || 'Copy text'}</button>
+    <button class="act-btn" title="${t('expand_all')}" onclick="toggleAllSections(this, true)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>${t('expand_all') || 'Expand'}</button>
+    <button class="act-btn" title="${t('collapse_all')}" onclick="toggleAllSections(this, false)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>${t('collapse_all') || 'Collapse'}</button>
     ${usage ? renderTokenChips(usage) : ''}
   </div>`;
 
@@ -3893,6 +3974,36 @@ function copyCurl(btn) {
   }
   if (body) cmd += ` \\\n  -d '${JSON.stringify(body).replace(/'/g, "'\\''")}'`;
   copyToClipboard(cmd, btn);
+}
+
+// Copy just the response text (final assistant message) — common debug ask:
+// "what did the model actually say?". Walks the reassembled body for either
+// Anthropic-style content[type=text].text or OpenAI-style output[message].content[output_text].text.
+function copyResponseText(btn) {
+  let e = filtered[activeIdx]; if (!e) return;
+  if (e._isStub) e = getFullEntry(e);
+  const out = getResponseOutput(e);
+  if (!out || !Array.isArray(out.content)) {
+    copyToClipboard('', btn);
+    return;
+  }
+  const parts = [];
+  for (const b of out.content) {
+    if (!b) continue;
+    if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+    else if (b.type === 'thinking' && typeof b.thinking === 'string') parts.push('[thinking]\n' + b.thinking);
+    else if (b.type === 'tool_use') parts.push(`[tool_use: ${b.name || ''}]\n` + JSON.stringify(b.input || {}, null, 2));
+  }
+  copyToClipboard(parts.join('\n\n').trim(), btn);
+}
+
+// Expand or collapse every <details class="section open"> in the detail
+// panel. ``open`` flag: true → expand all, false → collapse all.
+function toggleAllSections(_btn, open) {
+  document.querySelectorAll('#detail .section').forEach((s) => {
+    if (open) s.setAttribute('open', '');
+    else s.removeAttribute('open');
+  });
 }
 
 /* ─── Diff ─── */
