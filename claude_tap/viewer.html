@@ -48,6 +48,7 @@
   --orange: #f97316;
   --orange-bg: #fff7ed;
   --indigo: #6366f1;
+  --indigo-bg: #eef2ff;
 
   --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
   --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
@@ -82,6 +83,7 @@
   --orange: #f0883e;
   --orange-bg: #2d1b00;
   --indigo: #8b8fff;
+  --indigo-bg: #1e1b40;
 }
 [data-theme="dark"] .msg.user { border-color: #1f3a5f; }
 [data-theme="dark"] .msg.assistant { border-color: #1a3a26; }
@@ -404,7 +406,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .thinking-label {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; font-weight: 600; color: var(--indigo);
-  background: #eef2ff; padding: 2px 8px; border-radius: 4px; margin-bottom: 4px;
+  background: var(--indigo-bg); padding: 2px 8px; border-radius: 4px; margin-bottom: 4px;
 }
 
 /* ─── Tool blocks ─── */
@@ -600,6 +602,31 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .json-controls .json-btn:hover { color: var(--blue); background: var(--bg-card); }
 .json-controls .json-btn.active { color: var(--text); background: var(--bg-card); font-weight: 600; }
 .json-controls .ji-ico { font-size: 13px; line-height: 1; }
+
+/* ─── Search box embedded in JSON / Tools section toolbars ─── */
+.json-search, .tool-filter-input {
+  width: 160px; padding: 3px 8px; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--bg);
+  font-size: 11px; font-family: var(--sans); color: var(--text);
+  margin-left: 4px;
+}
+.json-search:focus, .tool-filter-input:focus {
+  outline: none; border-color: var(--blue);
+}
+.tool-filter-row {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-card); padding: 4px 0 8px;
+  display: flex; gap: 8px; align-items: center;
+}
+.tool-filter-input { flex: 1; max-width: 360px; }
+.tool-filter-count {
+  font-size: 11px; color: var(--text-tertiary);
+}
+/* Filtered-out lines hide; matching lines + ancestors stay visible.
+   Hits get a soft yellow wash so the eye lands on them. */
+.json-host.jfiltered .jhide { display: none; }
+.json-host .jhit { background: rgba(251,191,36,0.18); border-radius: 2px; }
+[data-theme="dark"] .json-host .jhit { background: rgba(251,191,36,0.14); }
 
 /* ─── Diff modal ─── */
 .diff-overlay {
@@ -851,6 +878,25 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   display: none;
 }
 .global-search-overlay.open { display: block; }
+
+/* Themed inline replacement for native prompt() — used by Cmd/Ctrl+G. */
+.mini-overlay {
+  position: fixed; top: 14px; right: 16px; z-index: 2000; display: none;
+}
+.mini-overlay.open { display: block; }
+.mini-overlay-box {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-card); box-shadow: var(--shadow-md);
+  font-size: 12px; color: var(--text);
+}
+.mini-overlay-box input {
+  width: 100px; font-size: 12px; font-family: var(--mono);
+  padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--text); outline: none;
+}
+.mini-overlay-box input:focus { border-color: var(--blue); }
+.mini-overlay-hint { color: var(--text-tertiary); font-size: 11px; }
 .global-search-box {
   display: flex;
   align-items: center;
@@ -1468,6 +1514,13 @@ const I18N = {
     diff_sys_old: "Previous", diff_sys_new: "Current",
     diff_fallback_warning: "No exact thread match found — showing closest same-model request",
     diff_select_target: "Compare against:", diff_select_auto: "Auto",
+    tip_request_json: "Copy the request body as pretty-printed JSON",
+    tip_curl: "Copy a cURL command that reproduces this request",
+    tip_diff: "Compare this turn with the previous turn",
+    filter_in_json: "Filter…",
+    filter_tools_ph: "Filter tools…",
+    task_simple: "simple",
+    no_matches: "No matches",
   },
   "zh-CN": {
     title: "claude-tap",
@@ -1494,6 +1547,13 @@ const I18N = {
     diff_sys_old: "上次", diff_sys_new: "本次",
     diff_fallback_warning: "未找到精确线程匹配 — 显示最近的同模型请求",
     diff_select_target: "对比对象：", diff_select_auto: "自动",
+    tip_request_json: "复制请求体为格式化的 JSON",
+    tip_curl: "复制为 cURL 命令",
+    tip_diff: "与上一轮对比",
+    filter_in_json: "筛选…",
+    filter_tools_ph: "筛选工具…",
+    task_simple: "简单",
+    no_matches: "无匹配",
   },
   ja: {
     title: "claude-tap",
@@ -1897,7 +1957,50 @@ function updateLiveStatus(forcedStatus) {
      4. None of the above → user opened the HTML directly; show drop zone
    ========================================================================= */
 
-function bootCommon() { initTheme(); initLang(); initGlobalSearch(); initToolFilterEvents(); initBackToTop(); }
+function bootCommon() { initTheme(); initLang(); initGlobalSearch(); initToolFilterEvents(); initBackToTop(); initShortcuts(); initHashRouting(); }
+
+// Global keyboard shortcuts.
+// ``/`` focuses the sidebar search box; ``Esc`` clears + blurs it. We
+// skip when the user is already typing in some other input/textarea so
+// we don't intercept their search.
+function initShortcuts() {
+  document.addEventListener('keydown', e => {
+    const target = e.target;
+    const inEditable = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+    if (e.key === '/' && !inEditable && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const inp = document.getElementById('search-input');
+      if (inp) { inp.focus(); inp.select(); e.preventDefault(); }
+    } else if (e.key === 'Escape') {
+      const inp = document.getElementById('search-input');
+      if (inp && document.activeElement === inp) {
+        inp.value = '';
+        if (typeof onSearch === 'function') onSearch('');
+        inp.blur();
+        e.preventDefault();
+      }
+    }
+  });
+}
+
+// URL hash deep-linking. ``#turn=N`` selects the turn with that number
+// when the page loads, and is updated when the user navigates between
+// turns — so a copy/paste of the URL re-opens the same turn. Uses
+// history.replaceState to avoid bloating the back-button stack.
+function initHashRouting() {
+  window.addEventListener('hashchange', () => {
+    const m = location.hash.match(/^#turn=(\d+)/);
+    if (!m) return;
+    const want = parseInt(m[1], 10);
+    const idx = filtered.findIndex(e => (e?.turn ?? null) === want);
+    if (idx >= 0 && idx !== activeIdx) selectEntry(idx);
+  });
+}
+function readHashTurnIdx() {
+  const m = location.hash.match(/^#turn=(\d+)/);
+  if (!m) return -1;
+  const want = parseInt(m[1], 10);
+  return filtered.findIndex(e => (e?.turn ?? null) === want);
+}
 
 // Show the back-to-top button when ``.detail`` is scrolled past 200px,
 // and scroll smoothly back when clicked.
@@ -1958,11 +2061,18 @@ function loadFile(file) {
 /* On first paint, auto-select the first entry so the detail panel never
  * shows up empty. We skip this if the user has already picked something. */
 function autoSelectFirst() {
-  if (activeIdx < 0 && filtered.length > 0) selectEntry(0);
+  if (activeIdx >= 0 || filtered.length === 0) return;
+  const hashIdx = readHashTurnIdx();
+  selectEntry(hashIdx >= 0 ? hashIdx : 0);
 }
 
 /* ─── Path & filter ─── */
-function getPath(e) { return (e.request?.path || '/unknown').replace(/\?.*$/, ''); }
+function getPath(e) {
+  // Some captured forward-mode requests come in with leading "//host/path"
+  // because the original URL was an absolute one. Trim the duplicated slash
+  // so the sidebar / chip display reads cleanly.
+  return (e.request?.path || '/unknown').replace(/\?.*$/, '').replace(/^\/{2,}/, '/');
+}
 
 function renderApp(preserveDetail) {
   $('#drop-zone').hidden = true;
@@ -2114,8 +2224,10 @@ function makeFilterChip(p, count) {
   chip.onclick = () => {
     userTouchedPathFilter = true;
     if (activePaths.has(p)) activePaths.delete(p); else activePaths.add(p);
-    if (activePaths.size === 0) activePaths.add(p);
-    chip.classList.toggle('active');
+    if (activePaths.size === 0) activePaths.add(p);  // never let the user filter to empty
+    // Sync class from authoritative state — the "size became 0" branch above
+    // can leave a blind classList.toggle out of sync with the Set.
+    chip.classList.toggle('active', activePaths.has(p));
     applyFilter();
   };
   return chip;
@@ -2269,6 +2381,15 @@ function initGlobalSearch() {
 }
 
 function openGlobalSearch() {
+  // Snapshot the user's filter state so we can restore it on close. Without
+  // this, normalizeFiltersForGlobalSearch() permanently wipes their path /
+  // tool / search-bar selections.
+  globalSearchState.savedFilters = {
+    activePaths: new Set(activePaths),
+    activeTools: activeTools ? new Set(activeTools) : null,
+    searchQuery: searchQuery,
+    userTouchedPathFilter: userTouchedPathFilter,
+  };
   normalizeFiltersForGlobalSearch();
   globalSearchState.open = true;
   $('#global-search-overlay').classList.add('open');
@@ -2289,6 +2410,17 @@ function closeGlobalSearch() {
   $('#global-search-overlay').classList.remove('open');
   clearGlobalSearchHighlights($('#detail'));
   updateGlobalSearchCount();
+  const saved = globalSearchState.savedFilters;
+  if (saved) {
+    activePaths = saved.activePaths;
+    activeTools = saved.activeTools;
+    searchQuery = saved.searchQuery;
+    userTouchedPathFilter = saved.userTouchedPathFilter;
+    if ($('#search-input')) $('#search-input').value = saved.searchQuery;
+    if ($('#search-clear')) $('#search-clear').style.display = saved.searchQuery ? '' : 'none';
+    globalSearchState.savedFilters = null;
+    applyFilter(true);
+  }
 }
 
 function normalizeFiltersForGlobalSearch() {
@@ -2621,7 +2753,7 @@ function getTaskFingerprint(e) {
   // Friendly short label: substring rule, else first non-empty line, else tool count.
   const lower = sysText.toLowerCase();
   let label = '';
-  if (!sysText && !tools.length) label = 'simple';
+  if (!sysText && !tools.length) label = t('task_simple');
   else {
     const rule = TASK_LABEL_RULES.find(([needle]) => lower.includes(needle));
     if (rule) label = rule[1];
@@ -2658,6 +2790,10 @@ function createSidebarItem(e, i) {
   const shortModel = model.replace(/^claude-/, '').replace(/-\d{8}$/, '');
   const badge = modelBadge(model);
   const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+  // Hover tooltip: full local timestamp + human-relative gap. The wall-clock
+  // alone is useless when scanning a fast session — every entry shows the
+  // same minute. The relative form ("3m ago") gives the actual gap.
+  const timeTip = e.timestamp ? new Date(e.timestamp).toLocaleString() + ' · ' + relativeTimeFromNow(e.timestamp) : '';
   // Task type coloring
   const taskInfo = getTaskFingerprint(e);
   const taskColor = taskInfo ? getTaskColor(taskInfo.fp) : TASK_COLORS[0];
@@ -2673,7 +2809,7 @@ function createSidebarItem(e, i) {
     <div class="si-row2">
       <span class="si-tok">${(inTok + outTok).toLocaleString()} ${t('tok')}</span>
       <span class="si-dur">${fmtDuration(e.duration_ms || 0)}</span>
-      <span class="si-time">${esc(timeStr)}</span>
+      <span class="si-time" title="${esc(timeTip)}">${esc(timeStr)}</span>
     </div>
     <div class="si-path">${esc((e.request?.method || '') + ' ' + (e.request?.path || ''))}</div>`;
   item.onclick = () => selectEntry(i);
@@ -2890,6 +3026,15 @@ function selectEntry(idx, opts) {
   if (idx < 0 || idx >= filtered.length) return;
   const force = !opts || opts.force !== false;
   activeIdx = idx;
+  // Reflect the active turn in the URL hash so the page is shareable /
+  // bookmarkable. replaceState avoids polluting the back-button stack.
+  const turn = filtered[idx]?.turn;
+  if (turn != null) {
+    const want = `#turn=${turn}`;
+    if (location.hash !== want) {
+      try { history.replaceState(null, '', want); } catch (_) {}
+    }
+  }
   if (virtualMode) {
     vsRenderVisible();
   } else {
@@ -2977,9 +3122,9 @@ function renderDetail(e) {
 
   // Action bar — buttons on the left, per-turn token chips on the right.
   html += `<div class="action-bar">
-    <button class="act-btn" onclick="copyRequestBody(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>${t('btn_request_json')}</button>
-    <button class="act-btn" onclick="copyCurl(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>${t('btn_curl')}</button>
-    <button class="act-btn" onclick="showDiff(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/><path d="M3 6h18M3 18h18" opacity=".4"/></svg>${t('btn_diff')}</button>
+    <button class="act-btn" title="${t('tip_request_json')}" onclick="copyRequestBody(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>${t('btn_request_json')}</button>
+    <button class="act-btn" title="${t('tip_curl')}" onclick="copyCurl(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>${t('btn_curl')}</button>
+    <button class="act-btn" title="${t('tip_diff')}" onclick="showDiff(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/><path d="M3 6h18M3 18h18" opacity=".4"/></svg>${t('btn_diff')}</button>
     ${usage ? renderTokenChips(usage) : ''}
   </div>`;
 
@@ -3280,12 +3425,21 @@ function renderMarkdown(text) {
   if (!text) return '';
   if (typeof marked === 'undefined') return `<div class="md-body"><pre>${esc(text)}</pre></div>`;
   if (!_markedConfigured) {
-    // Open all rendered links in a new tab, with safe rel.
+    // Open all rendered links in a new tab, with safe rel. Reject
+    // ``javascript:`` / ``data:`` / ``vbscript:`` schemes that would let a
+    // crafted prompt execute when the user clicked a "link" — the trace can
+    // contain arbitrary text that originated from the model.
+    const _safeHref = (href) => {
+      const s = String(href || '').trim();
+      if (/^(javascript|data|vbscript|file):/i.test(s)) return '#';
+      return s;
+    };
     marked.use({
       renderer: {
         link({ href, title, text: t }) {
           const tt = title ? ` title="${String(title).replace(/"/g, '&quot;')}"` : '';
-          return `<a href="${href}" target="_blank" rel="noopener noreferrer"${tt}>${t}</a>`;
+          const safe = _safeHref(href).replace(/"/g, '&quot;');
+          return `<a href="${safe}" target="_blank" rel="noopener noreferrer"${tt}>${t}</a>`;
         },
       },
     });
@@ -3346,7 +3500,7 @@ function renderContent(content, role) {
 }
 
 function renderTools(tools) {
-  return tools.map(td => {
+  const blocks = tools.map(td => {
     // OpenAI Responses API built-in tools (web_search / file_search /
     // code_interpreter / ...) identify by ``type`` and have no ``name``.
     const name = td.name || td.type || 'unknown', desc = td.description || '';
@@ -3362,6 +3516,31 @@ function renderTools(tools) {
     }
     return `<div class="tool-block"><div class="tool-block-header"><span class="tb-arrow">&#9654;</span><span class="tb-name">${esc(name)}</span><span class="tb-desc">${esc(shortDesc)}</span></div><div class="tool-block-body">${desc ? `<div class="tb-full-desc">${esc(desc)}</div>` : ''}${paramsHtml}</div></div>`;
   }).join('');
+  // Codex sessions ship 100+ tools — a substring filter on name/desc is
+  // way more useful than scrolling. The row is sticky so the input
+  // stays visible while the user scrolls through the matches.
+  const filterRow = `<div class="tool-filter-row" onclick="event.stopPropagation()">` +
+    `<input type="search" class="tool-filter-input" placeholder="${t('filter_tools_ph')}" oninput="filterToolList(this)" />` +
+    `<span class="tool-filter-count" data-tool-count></span>` +
+    `</div>`;
+  return filterRow + blocks;
+}
+
+function filterToolList(input) {
+  const q = (input.value || '').trim().toLowerCase();
+  const root = input.closest('.section-body') || input.parentElement.parentElement;
+  if (!root) return;
+  const blocks = root.querySelectorAll('.tool-block');
+  let shown = 0;
+  blocks.forEach(b => {
+    const name = (b.querySelector('.tb-name')?.textContent || '').toLowerCase();
+    const desc = (b.querySelector('.tb-desc')?.textContent || '').toLowerCase();
+    const match = !q || name.includes(q) || desc.includes(q);
+    b.style.display = match ? '' : 'none';
+    if (match) shown++;
+  });
+  const count = root.querySelector('[data-tool-count]');
+  if (count) count.textContent = q ? `${shown} / ${blocks.length}` : '';
 }
 
 // Recursive: param row + nested children for object.properties /
@@ -3634,11 +3813,48 @@ function renderJsonHost(value, hostId) {
 function renderJsonControls(hostId) {
   return (
     `<div class="json-controls" onclick="event.stopPropagation()">` +
+      `<input type="search" class="json-search" placeholder="${t('filter_in_json')}" oninput="jsonFilter('${hostId}', this.value)" />` +
       `<button class="json-btn" onclick="jsonExpandAll('${hostId}')" title="${t('json_expand_all')}"><span class="ji-ico">⊞</span></button>` +
       `<button class="json-btn" onclick="jsonCollapseAll('${hostId}')" title="${t('json_collapse_all')}"><span class="ji-ico">⊟</span></button>` +
       `<button class="json-btn" data-jw onclick="jsonToggleWrap('${hostId}', this)" title="${t('json_wrap')}"><span class="ji-ico">↩</span></button>` +
     `</div>`
   );
+}
+
+// Substring filter over the JSON tree. Hides every line whose text doesn't
+// contain the query, then walks ancestor details upward to keep the
+// matched line visible (and force its containing details open). With an
+// empty query, restores the natural state — including any details the
+// user manually collapsed before.
+function jsonFilter(hostId, query) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  const q = (query || '').trim().toLowerCase();
+  if (!q) {
+    host.classList.remove('jfiltered');
+    host.querySelectorAll('.jhide').forEach(n => n.classList.remove('jhide'));
+    host.querySelectorAll('.jhit').forEach(n => n.classList.remove('jhit'));
+    return;
+  }
+  host.classList.add('jfiltered');
+  const lines = host.querySelectorAll('.jline');
+  // Pass 1: hide every line + every details container.
+  lines.forEach(l => l.classList.add('jhide'));
+  host.querySelectorAll('.jdet').forEach(d => d.classList.add('jhide'));
+  host.querySelectorAll('.jhit').forEach(n => n.classList.remove('jhit'));
+  // Pass 2: for each line whose own text matches, un-hide it and walk
+  // ancestors back up so the path to the match stays visible.
+  lines.forEach(line => {
+    if (!line.textContent.toLowerCase().includes(q)) return;
+    line.classList.remove('jhide');
+    line.classList.add('jhit');
+    let p = line.parentElement;
+    while (p && !p.classList.contains('json-host')) {
+      p.classList.remove('jhide');
+      if (p.tagName === 'DETAILS') p.open = true;
+      p = p.parentElement;
+    }
+  });
 }
 
 function jsonExpandAll(hostId) {
@@ -4164,6 +4380,23 @@ function roleClass(role) {
   return 'system';  // developer / system / unknown all share the system style
 }
 function fmtDuration(ms) { return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's'; }
+
+// Human-relative gap from now. "just now" / "5m ago" / "2h ago" / "3d ago".
+// Used for sidebar item time tooltips so a fast session's same-minute
+// timestamps still convey actual ordering at a glance.
+function relativeTimeFromNow(ts) {
+  const t = typeof ts === 'string' ? Date.parse(ts) : Number(ts);
+  if (!isFinite(t)) return '';
+  const diffSec = Math.round((Date.now() - t) / 1000);
+  if (diffSec < 5) return 'just now';
+  if (diffSec < 60) return diffSec + 's ago';
+  const m = Math.round(diffSec / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.round(m / 60);
+  if (h < 24) return h + 'h ago';
+  const d = Math.round(h / 24);
+  return d + 'd ago';
+}
 function fmtChars(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
 
 /* ─── Keyboard nav ───
@@ -4208,23 +4441,57 @@ document.addEventListener('keydown', ev => {
 
 function promptJumpToTurn() {
   if (!filtered.length) return;
-  const input = prompt('Jump to turn number:');
-  if (!input) return;
-  const turnNum = parseInt(input, 10);
-  if (isNaN(turnNum)) return;
-  // Find the filtered entry with matching turn number
-  const idx = filtered.findIndex(e => e.turn === turnNum);
-  if (idx >= 0) {
-    selectEntry(idx);
-  } else {
-    // Find closest turn
-    let closestIdx = 0, closestDist = Infinity;
-    filtered.forEach((e, i) => {
-      const dist = Math.abs((e.turn || 0) - turnNum);
-      if (dist < closestDist) { closestDist = dist; closestIdx = i; }
-    });
-    selectEntry(closestIdx);
+  // Inline overlay instead of native prompt() — themed, non-blocking, and
+  // tells the user when we fell back to the closest turn instead of an
+  // exact match.
+  let host = document.getElementById('jump-turn-overlay');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'jump-turn-overlay';
+    host.className = 'mini-overlay';
+    host.innerHTML = `
+      <div class="mini-overlay-box">
+        <label for="jump-turn-input">${esc(t('jump_to_turn') || 'Jump to turn:')}</label>
+        <input type="number" id="jump-turn-input" min="1" placeholder="${filtered.length}">
+        <button class="global-search-btn" id="jump-turn-go">${esc(t('go') || 'Go')}</button>
+        <button class="global-search-btn" id="jump-turn-cancel">${esc(t('cancel') || 'Cancel')}</button>
+        <span class="mini-overlay-hint" id="jump-turn-hint"></span>
+      </div>`;
+    document.body.appendChild(host);
   }
+  const input = host.querySelector('#jump-turn-input');
+  const hint = host.querySelector('#jump-turn-hint');
+  hint.textContent = '';
+  input.value = '';
+  host.classList.add('open');
+  input.focus();
+
+  const close = () => host.classList.remove('open');
+  const submit = () => {
+    const turnNum = parseInt(input.value, 10);
+    if (isNaN(turnNum)) { close(); return; }
+    const idx = filtered.findIndex(e => e.turn === turnNum);
+    if (idx >= 0) {
+      selectEntry(idx);
+      close();
+    } else {
+      let closestIdx = 0, closestDist = Infinity;
+      filtered.forEach((e, i) => {
+        const dist = Math.abs((e.turn || 0) - turnNum);
+        if (dist < closestDist) { closestDist = dist; closestIdx = i; }
+      });
+      const closestTurn = filtered[closestIdx]?.turn;
+      hint.textContent = (t('jumped_to_closest') || 'No turn ') + turnNum + ' — ' + (t('closest_turn') || 'closest:') + ' ' + closestTurn;
+      selectEntry(closestIdx);
+      setTimeout(close, 1500);
+    }
+  };
+  host.querySelector('#jump-turn-go').onclick = submit;
+  host.querySelector('#jump-turn-cancel').onclick = close;
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); close(); }
+  };
 }
 
 /* ─── Mobile sidebar toggle (R1) ─── */
