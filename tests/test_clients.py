@@ -144,6 +144,27 @@ def test_multi_backend_clients_advertise_three_protocols():
         assert {"anthropic", "openai", "gemini"}.issubset(set(names)), name
 
 
+def test_yolo_args_match_each_cli_published_flag():
+    # Pinning each client's yolo invocation here so a future "let's update
+    # the wording" PR has to update the test too — these flags are taken
+    # from each CLI's own --help output, not invented.
+    expected = {
+        "claude":   ("--dangerously-skip-permissions",),
+        "codex":    ("--full-auto",),
+        "gemini":   ("--yolo",),
+        "opencode": ("--dangerously-skip-permissions",),
+        "kimi":     ("--yolo",),
+        "iflow":    ("--yolo",),
+        "cursor":   ("--yolo",),
+        "qoder":    ("--yolo",),
+        "hermes":   ("--yolo",),
+        "devin":    ("--permission-mode", "dangerous"),
+        "pi":       (),  # no single-flag yolo; runner prints a note instead
+    }
+    for name, want in expected.items():
+        assert clients.get(name).yolo_args == want, name
+
+
 def test_proprietary_clients_use_passthrough_protocol():
     from claude_tap.protocols import PASSTHROUGH
 

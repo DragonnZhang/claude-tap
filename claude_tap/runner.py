@@ -59,6 +59,7 @@ async def run_client(
     forward_args: list[str],
     proxy_mode: str = "reverse",
     ca_cert_path: Path | None = None,
+    yolo: bool = True,
 ) -> int:
     """Spawn ``client.cmd`` pointed at the local proxy and wait for it.
 
@@ -100,6 +101,18 @@ async def run_client(
     for key in client.pre_launch_env_purge:
         env.pop(key, None)
 
+    yolo_args: list[str] = []
+    if yolo:
+        if client.yolo_args:
+            # Prepend so user-supplied forward_args win on conflict.
+            yolo_args = list(client.yolo_args)
+            cmd_args = yolo_args + cmd_args
+        else:
+            sys.stdout.write(
+                f"[claude-tap] note: {client.label} has no single-flag yolo mode; "
+                f"approve actions in-session or pass --no-yolo to silence this.\n"
+            )
+
     cmd = [client.cmd] + cmd_args
     sys.stdout.write(f"\n[claude-tap] launching {client.label}: {' '.join(cmd)}\n")
     if proxy_mode == "forward":
@@ -111,6 +124,8 @@ async def run_client(
             sys.stdout.write(f"[claude-tap] {key}={value}\n")
         if redirect_args:
             sys.stdout.write(f"[claude-tap] cli args: {' '.join(redirect_args)}\n")
+    if yolo_args:
+        sys.stdout.write(f"[claude-tap] yolo: {' '.join(yolo_args)}  (default; use --no-yolo to disable)\n")
     sys.stdout.flush()
 
     use_fg = hasattr(os, "tcsetpgrp") and sys.stdin.isatty()

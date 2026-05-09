@@ -102,6 +102,16 @@ def test_run_no_live_overrides_smart_default(parser):
     assert args.live is False
 
 
+def test_run_yolo_defaults_on(parser):
+    args = parser.parse_args(["run"])
+    assert args.yolo is True
+
+
+def test_run_no_yolo_disables(parser):
+    args = parser.parse_args(["run", "--no-yolo"])
+    assert args.yolo is False
+
+
 def test_run_live_short_form(parser):
     args = parser.parse_args(["run", "-L"])
     assert args.live is True

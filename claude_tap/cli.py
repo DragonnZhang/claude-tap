@@ -232,6 +232,22 @@ def _build_run_parser(sub: argparse._SubParsersAction) -> None:
         choices=clients_mod.names(),
         help="which client to launch (default: claude)",
     )
+    # Yolo (auto-approve all actions) is on by default. Each client
+    # translates this to its own equivalent flag (claude:
+    # --dangerously-skip-permissions; codex: --full-auto; gemini/iflow/
+    # kimi/cursor/qoder/hermes: --yolo; devin: --permission-mode
+    # dangerous; opencode: --dangerously-skip-permissions). Pi has no
+    # one-flag equivalent; we just print a note.
+    p.add_argument(
+        "--yolo",
+        dest="yolo",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "auto-approve every action by injecting the client's own yolo flag "
+            "(default on; --no-yolo to disable)"
+        ),
+    )
     _add_proxy_options(p, default_host="127.0.0.1")
     _add_viewer_options(p)
 
@@ -501,6 +517,7 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
                     forward_args=args.forward,
                     proxy_mode=args.mode,
                     ca_cert_path=ca_cert_path,
+                    yolo=getattr(args, "yolo", True),
                 )
             except asyncio.CancelledError:
                 pass

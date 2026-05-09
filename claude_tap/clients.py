@@ -70,6 +70,14 @@ class Client:
     # can look up an active provider from a config file.
     cli_args_overrides: Callable[[str, Mapping[str, str]], list[str]] = field(default=_no_cli_args)
 
+    # CLI args that put this client into "auto-approve every action" / yolo
+    # mode. Each CLI uses different wording (``--yolo`` / ``--full-auto`` /
+    # ``--dangerously-skip-permissions`` / etc.) — see each client's setup
+    # below. claude-tap prepends these to the child argv when yolo is on
+    # (default; turned off by ``--no-yolo``). Empty tuple means the CLI has
+    # no single-flag yolo path; we'll print a note instead of failing.
+    yolo_args: tuple[str, ...] = ()
+
     # Read the user's configured upstream URL from env / config files. Returns
     # ``None`` if the user has not customized it. Used as the proxy's upstream
     # target when ``--target`` is omitted, so a user's private relay /
@@ -740,6 +748,7 @@ CLAUDE = Client(
     read_configured_upstream=_claude_configured,
     pre_launch_env_purge=("CLAUDECODE", "CLAUDE_CODE_SSE_PORT"),
     detect_auth=_claude_auth,
+    yolo_args=("--dangerously-skip-permissions",),
 )
 
 
@@ -754,6 +763,10 @@ CODEX = Client(
     cli_args_overrides=_codex_cli_args,
     read_configured_upstream=_codex_configured,
     detect_auth=_codex_auth,
+    # ``--full-auto`` sandboxes the workspace and auto-approves inside it;
+    # the no-sandbox flavour is ``--dangerously-bypass-approvals-and-sandbox``
+    # but that's a sharper edge than this default warrants.
+    yolo_args=("--full-auto",),
 )
 
 
@@ -766,6 +779,7 @@ GEMINI_CLI = Client(
     env_overrides=_gemini_env,
     read_configured_upstream=_gemini_configured,
     detect_auth=_gemini_auth,
+    yolo_args=("--yolo",),
 )
 
 
@@ -791,6 +805,9 @@ OPENCODE = Client(
     read_configured_upstream=_opencode_configured,
     env_redirect_reliable=False,
     detect_auth=_opencode_auth,
+    # opencode's run subcommand has --dangerously-skip-permissions; the
+    # top-level (interactive TUI) honours the same flag.
+    yolo_args=("--dangerously-skip-permissions",),
 )
 
 
@@ -803,6 +820,9 @@ PI = Client(
     read_configured_upstream=_pi_configured,
     env_redirect_reliable=False,
     detect_auth=_pi_auth,
+    # Pi has no single-flag yolo. It uses ``--tools <allowlist>`` for
+    # gating; without an explicit allowlist the user is asked per-tool.
+    # We leave yolo_args empty and the CLI prints a "not supported" note.
 )
 
 
@@ -815,6 +835,7 @@ KIMI = Client(
     read_configured_upstream=_kimi_configured,
     env_redirect_reliable=False,
     detect_auth=_kimi_auth,
+    yolo_args=("--yolo",),
 )
 
 
@@ -827,6 +848,7 @@ IFLOW = Client(
     read_configured_upstream=_iflow_configured,
     env_redirect_reliable=False,
     detect_auth=_iflow_auth,
+    yolo_args=("--yolo",),
 )
 
 
@@ -839,6 +861,8 @@ CURSOR = Client(
     env_overrides=_cursor_env,
     read_configured_upstream=_cursor_configured,
     detect_auth=_cursor_auth,
+    # ``--yolo`` is documented as an alias of ``--force`` ("Run Everything").
+    yolo_args=("--yolo",),
 )
 
 
@@ -851,6 +875,7 @@ QODER = Client(
     env_overrides=_qoder_env,
     read_configured_upstream=_qoder_configured,
     detect_auth=_qoder_auth,
+    yolo_args=("--yolo",),
 )
 
 
@@ -863,6 +888,9 @@ DEVIN = Client(
     # Rust binary using rustls — no env-based redirect works. Forward mode +
     # OS-level CA install is the only path.
     detect_auth=_devin_auth,
+    # Devin uses ``--permission-mode <mode>`` with values "auto" (read-only
+    # auto-approve) and "dangerous" (full auto-approve).
+    yolo_args=("--permission-mode", "dangerous"),
 )
 
 
@@ -876,6 +904,7 @@ HERMES = Client(
     read_configured_upstream=_hermes_configured,
     env_redirect_reliable=False,
     detect_auth=_hermes_auth,
+    yolo_args=("--yolo",),
 )
 
 
