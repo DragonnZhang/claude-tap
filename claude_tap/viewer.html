@@ -88,18 +88,14 @@
 [data-theme="dark"] .msg.system { border-color: #3d3000; }
 [data-theme="dark"] .msg.tool_result { border-color: #2a1f48; }
 [data-theme="dark"] .msg pre, [data-theme="dark"] .msg .pre-text { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.06); }
-[data-theme="dark"] .json-host json-viewer {
-  --background-color: transparent;
-  --color: #e6edf3;
-  --property-color: #bc8cff;
-  --string-color: #3fb950;
-  --number-color: #d29922;
-  --boolean-color: #f85149;
-  --null-color: #8b949e;
-  --preview-color: #6e7681;
-  --indentguide-color: #30363d;
-  --indentguide-color-active: #58a6ff;
-  --highlight-color: #ffd33d;
+[data-theme="dark"] .json-host {
+  --jk-color: #bc8cff;     /* keys */
+  --js-color: #3fb950;     /* strings */
+  --jn-color: #d29922;     /* numbers */
+  --jb-color: #f85149;     /* booleans */
+  --jp-color: #8b949e;     /* punctuation */
+  --jpv-color: #6e7681;    /* collapsed preview text */
+  --jg-color: rgba(255,255,255,0.06);  /* indent guide */
 }
 *,*::before,*::after { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: var(--sans); background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; -webkit-font-smoothing: antialiased; }
@@ -524,8 +520,64 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .tok-label { color: var(--text-tertiary); font-size: 11px; }
 .tok-val { color: var(--text-secondary); font-weight: 600; font-family: var(--mono); font-size: 11px; }
 
-/* ─── JSON viewer (collapsible tree + wrap toggle) ─── */
-.json-host { position: relative; }
+/* ─── JSON viewer (custom tree, with collapsed preview + wrap toggle) ───
+   Each node renders as ``.jline`` rows. Objects/arrays use ``<details>``:
+   when collapsed, summary shows ``▶ {key: val, …N more}``; when expanded,
+   summary shows ``▼ {`` and a separate close-brace row sits at the parent
+   indent. Indent guides are subtle vertical rules on each ``.jchildren``.
+   The wrap toggle flips ``data-wrap`` on the host between ``off`` (every
+   .jline is single-line, host scrolls horizontally) and ``on`` (long
+   string values flow onto the next line). */
+.json-host {
+  position: relative;
+  background: var(--bg-code); padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  max-height: 600px; overflow: auto;
+  font-family: var(--mono); font-size: 12px; line-height: 1.6;
+  --jk-color: #7c3aed;
+  --js-color: #059669;
+  --jn-color: #d97706;
+  --jb-color: #dc2626;
+  --jp-color: #6b7280;
+  --jpv-color: #6b7280;
+  --jg-color: rgba(0,0,0,0.06);
+}
+.json-host[data-wrap="off"] .jline { white-space: pre; }
+.json-host[data-wrap="on"]  .jline { white-space: pre-wrap; word-break: break-word; }
+.json-host .jline { padding-left: 0; }
+.json-host .jdet { display: block; }
+.json-host .jdet > summary {
+  list-style: none; cursor: pointer; outline: none;
+  border-radius: 3px;
+}
+.json-host .jdet > summary::-webkit-details-marker { display: none; }
+.json-host .jdet > summary:hover { background: var(--bg-hover); }
+.json-host .jchev {
+  display: inline-block; width: 12px;
+  color: var(--jp-color); font-size: 9px;
+  transition: transform .15s; user-select: none;
+}
+.json-host .jdet[open] > summary .jchev { transform: rotate(90deg); }
+.json-host .jdet[open] > summary .jpreview,
+.json-host .jdet[open] > summary .jb-collapsed-close { display: none; }
+.json-host .jdet:not([open]) > .jchildren,
+.json-host .jdet:not([open]) > .jclose { display: none; }
+.json-host .jchildren {
+  margin-left: 0;
+  padding-left: 16px;
+  border-left: 1px solid var(--jg-color);
+}
+.json-host .jclose { padding-left: 0; }
+/* Type colours and punctuation. Punctuation (``:``, ``,``, ``{``, ``}``)
+   stays muted so the eye lands on the keys/values. */
+.json-host .jp { color: var(--jp-color); }
+.json-host .jk { color: var(--jk-color); }
+.json-host .js { color: var(--js-color); }
+.json-host .jn { color: var(--jn-color); }
+.json-host .jb { color: var(--jb-color); }
+.json-host .jnull { color: var(--jp-color); font-style: italic; }
+.json-host .jpreview { color: var(--jpv-color); }
 /* Compact icon-led control group lives in the .section-header (right side),
    matching the .md-toggle pattern — no extra row above the JSON view. */
 .json-controls {
@@ -543,38 +595,6 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .json-controls .json-btn:hover { color: var(--blue); background: var(--bg-card); }
 .json-controls .json-btn.active { color: var(--text); background: var(--bg-card); font-weight: 600; }
 .json-controls .ji-ico { font-size: 13px; line-height: 1; }
-/* The Full JSON tree is rendered by the bundled @alenaksu/json-viewer
-   web component. We theme it via its CSS custom properties (light here,
-   dark counterparts in the [data-theme="dark"] block above). The
-   ``.json-host`` provides the scrollable framing — bg, border, max-height
-   — and json-viewer renders the tree inside. */
-.json-host {
-  background: var(--bg-code); padding: 12px 14px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-light);
-  max-height: 600px; overflow: auto;
-}
-.json-host json-viewer {
-  display: block;
-  font-family: var(--mono); font-size: 12px; line-height: 1.55;
-  --background-color: transparent;
-  --color: var(--text);
-  --font-family: var(--mono);
-  --font-size: 12px;
-  --line-height: 1.55;
-  --indent-size: 1em;
-  --indentguide-size: 1px;
-  --indentguide-style: solid;
-  --indentguide-color: var(--border-light);
-  --indentguide-color-active: var(--blue);
-  --string-color: #059669;
-  --number-color: #d97706;
-  --boolean-color: #dc2626;
-  --null-color: #6b7280;
-  --property-color: #7c3aed;
-  --preview-color: #6b7280;
-  --highlight-color: #fbbf24;
-}
 
 /* ─── Diff modal ─── */
 .diff-overlay {
@@ -1301,1297 +1321,6 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
  */
 !function(e,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports):"function"==typeof define&&define.amd?define(["exports"],t):t((e="undefined"!=typeof globalThis?globalThis:e||self).marked={})}(this,(function(e){"use strict";function t(){return{async:!1,breaks:!1,extensions:null,gfm:!0,hooks:null,pedantic:!1,renderer:null,silent:!1,tokenizer:null,walkTokens:null}}function n(t){e.defaults=t}e.defaults={async:!1,breaks:!1,extensions:null,gfm:!0,hooks:null,pedantic:!1,renderer:null,silent:!1,tokenizer:null,walkTokens:null};const s=/[&<>"']/,r=new RegExp(s.source,"g"),i=/[<>"']|&(?!(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/,l=new RegExp(i.source,"g"),o={"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"},a=e=>o[e];function c(e,t){if(t){if(s.test(e))return e.replace(r,a)}else if(i.test(e))return e.replace(l,a);return e}const h=/&(#(?:\d+)|(?:#x[0-9A-Fa-f]+)|(?:\w+));?/gi;const p=/(^|[^\[])\^/g;function u(e,t){let n="string"==typeof e?e:e.source;t=t||"";const s={replace:(e,t)=>{let r="string"==typeof t?t:t.source;return r=r.replace(p,"$1"),n=n.replace(e,r),s},getRegex:()=>new RegExp(n,t)};return s}function k(e){try{e=encodeURI(e).replace(/%25/g,"%")}catch{return null}return e}const g={exec:()=>null};function f(e,t){const n=e.replace(/\|/g,((e,t,n)=>{let s=!1,r=t;for(;--r>=0&&"\\"===n[r];)s=!s;return s?"|":" |"})).split(/ \|/);let s=0;if(n[0].trim()||n.shift(),n.length>0&&!n[n.length-1].trim()&&n.pop(),t)if(n.length>t)n.splice(t);else for(;n.length<t;)n.push("");for(;s<n.length;s++)n[s]=n[s].trim().replace(/\\\|/g,"|");return n}function d(e,t,n){const s=e.length;if(0===s)return"";let r=0;for(;r<s;){const i=e.charAt(s-r-1);if(i!==t||n){if(i===t||!n)break;r++}else r++}return e.slice(0,s-r)}function x(e,t,n,s){const r=t.href,i=t.title?c(t.title):null,l=e[1].replace(/\\([\[\]])/g,"$1");if("!"!==e[0].charAt(0)){s.state.inLink=!0;const e={type:"link",raw:n,href:r,title:i,text:l,tokens:s.inlineTokens(l)};return s.state.inLink=!1,e}return{type:"image",raw:n,href:r,title:i,text:c(l)}}class b{options;rules;lexer;constructor(t){this.options=t||e.defaults}space(e){const t=this.rules.block.newline.exec(e);if(t&&t[0].length>0)return{type:"space",raw:t[0]}}code(e){const t=this.rules.block.code.exec(e);if(t){const e=t[0].replace(/^ {1,4}/gm,"");return{type:"code",raw:t[0],codeBlockStyle:"indented",text:this.options.pedantic?e:d(e,"\n")}}}fences(e){const t=this.rules.block.fences.exec(e);if(t){const e=t[0],n=function(e,t){const n=e.match(/^(\s+)(?:```)/);if(null===n)return t;const s=n[1];return t.split("\n").map((e=>{const t=e.match(/^\s+/);if(null===t)return e;const[n]=t;return n.length>=s.length?e.slice(s.length):e})).join("\n")}(e,t[3]||"");return{type:"code",raw:e,lang:t[2]?t[2].trim().replace(this.rules.inline.anyPunctuation,"$1"):t[2],text:n}}}heading(e){const t=this.rules.block.heading.exec(e);if(t){let e=t[2].trim();if(/#$/.test(e)){const t=d(e,"#");this.options.pedantic?e=t.trim():t&&!/ $/.test(t)||(e=t.trim())}return{type:"heading",raw:t[0],depth:t[1].length,text:e,tokens:this.lexer.inline(e)}}}hr(e){const t=this.rules.block.hr.exec(e);if(t)return{type:"hr",raw:d(t[0],"\n")}}blockquote(e){const t=this.rules.block.blockquote.exec(e);if(t){let e=d(t[0],"\n").split("\n"),n="",s="";const r=[];for(;e.length>0;){let t=!1;const i=[];let l;for(l=0;l<e.length;l++)if(/^ {0,3}>/.test(e[l]))i.push(e[l]),t=!0;else{if(t)break;i.push(e[l])}e=e.slice(l);const o=i.join("\n"),a=o.replace(/\n {0,3}((?:=+|-+) *)(?=\n|$)/g,"\n    $1").replace(/^ {0,3}>[ \t]?/gm,"");n=n?`${n}\n${o}`:o,s=s?`${s}\n${a}`:a;const c=this.lexer.state.top;if(this.lexer.state.top=!0,this.lexer.blockTokens(a,r,!0),this.lexer.state.top=c,0===e.length)break;const h=r[r.length-1];if("code"===h?.type)break;if("blockquote"===h?.type){const t=h,i=t.raw+"\n"+e.join("\n"),l=this.blockquote(i);r[r.length-1]=l,n=n.substring(0,n.length-t.raw.length)+l.raw,s=s.substring(0,s.length-t.text.length)+l.text;break}if("list"!==h?.type);else{const t=h,i=t.raw+"\n"+e.join("\n"),l=this.list(i);r[r.length-1]=l,n=n.substring(0,n.length-h.raw.length)+l.raw,s=s.substring(0,s.length-t.raw.length)+l.raw,e=i.substring(r[r.length-1].raw.length).split("\n")}}return{type:"blockquote",raw:n,tokens:r,text:s}}}list(e){let t=this.rules.block.list.exec(e);if(t){let n=t[1].trim();const s=n.length>1,r={type:"list",raw:"",ordered:s,start:s?+n.slice(0,-1):"",loose:!1,items:[]};n=s?`\\d{1,9}\\${n.slice(-1)}`:`\\${n}`,this.options.pedantic&&(n=s?n:"[*+-]");const i=new RegExp(`^( {0,3}${n})((?:[\t ][^\\n]*)?(?:\\n|$))`);let l=!1;for(;e;){let n=!1,s="",o="";if(!(t=i.exec(e)))break;if(this.rules.block.hr.test(e))break;s=t[0],e=e.substring(s.length);let a=t[2].split("\n",1)[0].replace(/^\t+/,(e=>" ".repeat(3*e.length))),c=e.split("\n",1)[0],h=!a.trim(),p=0;if(this.options.pedantic?(p=2,o=a.trimStart()):h?p=t[1].length+1:(p=t[2].search(/[^ ]/),p=p>4?1:p,o=a.slice(p),p+=t[1].length),h&&/^ *$/.test(c)&&(s+=c+"\n",e=e.substring(c.length+1),n=!0),!n){const t=new RegExp(`^ {0,${Math.min(3,p-1)}}(?:[*+-]|\\d{1,9}[.)])((?:[ \t][^\\n]*)?(?:\\n|$))`),n=new RegExp(`^ {0,${Math.min(3,p-1)}}((?:- *){3,}|(?:_ *){3,}|(?:\\* *){3,})(?:\\n+|$)`),r=new RegExp(`^ {0,${Math.min(3,p-1)}}(?:\`\`\`|~~~)`),i=new RegExp(`^ {0,${Math.min(3,p-1)}}#`);for(;e;){const l=e.split("\n",1)[0];if(c=l,this.options.pedantic&&(c=c.replace(/^ {1,4}(?=( {4})*[^ ])/g,"  ")),r.test(c))break;if(i.test(c))break;if(t.test(c))break;if(n.test(e))break;if(c.search(/[^ ]/)>=p||!c.trim())o+="\n"+c.slice(p);else{if(h)break;if(a.search(/[^ ]/)>=4)break;if(r.test(a))break;if(i.test(a))break;if(n.test(a))break;o+="\n"+c}h||c.trim()||(h=!0),s+=l+"\n",e=e.substring(l.length+1),a=c.slice(p)}}r.loose||(l?r.loose=!0:/\n *\n *$/.test(s)&&(l=!0));let u,k=null;this.options.gfm&&(k=/^\[[ xX]\] /.exec(o),k&&(u="[ ] "!==k[0],o=o.replace(/^\[[ xX]\] +/,""))),r.items.push({type:"list_item",raw:s,task:!!k,checked:u,loose:!1,text:o,tokens:[]}),r.raw+=s}r.items[r.items.length-1].raw=r.items[r.items.length-1].raw.trimEnd(),r.items[r.items.length-1].text=r.items[r.items.length-1].text.trimEnd(),r.raw=r.raw.trimEnd();for(let e=0;e<r.items.length;e++)if(this.lexer.state.top=!1,r.items[e].tokens=this.lexer.blockTokens(r.items[e].text,[]),!r.loose){const t=r.items[e].tokens.filter((e=>"space"===e.type)),n=t.length>0&&t.some((e=>/\n.*\n/.test(e.raw)));r.loose=n}if(r.loose)for(let e=0;e<r.items.length;e++)r.items[e].loose=!0;return r}}html(e){const t=this.rules.block.html.exec(e);if(t){return{type:"html",block:!0,raw:t[0],pre:"pre"===t[1]||"script"===t[1]||"style"===t[1],text:t[0]}}}def(e){const t=this.rules.block.def.exec(e);if(t){const e=t[1].toLowerCase().replace(/\s+/g," "),n=t[2]?t[2].replace(/^<(.*)>$/,"$1").replace(this.rules.inline.anyPunctuation,"$1"):"",s=t[3]?t[3].substring(1,t[3].length-1).replace(this.rules.inline.anyPunctuation,"$1"):t[3];return{type:"def",tag:e,raw:t[0],href:n,title:s}}}table(e){const t=this.rules.block.table.exec(e);if(!t)return;if(!/[:|]/.test(t[2]))return;const n=f(t[1]),s=t[2].replace(/^\||\| *$/g,"").split("|"),r=t[3]&&t[3].trim()?t[3].replace(/\n[ \t]*$/,"").split("\n"):[],i={type:"table",raw:t[0],header:[],align:[],rows:[]};if(n.length===s.length){for(const e of s)/^ *-+: *$/.test(e)?i.align.push("right"):/^ *:-+: *$/.test(e)?i.align.push("center"):/^ *:-+ *$/.test(e)?i.align.push("left"):i.align.push(null);for(let e=0;e<n.length;e++)i.header.push({text:n[e],tokens:this.lexer.inline(n[e]),header:!0,align:i.align[e]});for(const e of r)i.rows.push(f(e,i.header.length).map(((e,t)=>({text:e,tokens:this.lexer.inline(e),header:!1,align:i.align[t]}))));return i}}lheading(e){const t=this.rules.block.lheading.exec(e);if(t)return{type:"heading",raw:t[0],depth:"="===t[2].charAt(0)?1:2,text:t[1],tokens:this.lexer.inline(t[1])}}paragraph(e){const t=this.rules.block.paragraph.exec(e);if(t){const e="\n"===t[1].charAt(t[1].length-1)?t[1].slice(0,-1):t[1];return{type:"paragraph",raw:t[0],text:e,tokens:this.lexer.inline(e)}}}text(e){const t=this.rules.block.text.exec(e);if(t)return{type:"text",raw:t[0],text:t[0],tokens:this.lexer.inline(t[0])}}escape(e){const t=this.rules.inline.escape.exec(e);if(t)return{type:"escape",raw:t[0],text:c(t[1])}}tag(e){const t=this.rules.inline.tag.exec(e);if(t)return!this.lexer.state.inLink&&/^<a /i.test(t[0])?this.lexer.state.inLink=!0:this.lexer.state.inLink&&/^<\/a>/i.test(t[0])&&(this.lexer.state.inLink=!1),!this.lexer.state.inRawBlock&&/^<(pre|code|kbd|script)(\s|>)/i.test(t[0])?this.lexer.state.inRawBlock=!0:this.lexer.state.inRawBlock&&/^<\/(pre|code|kbd|script)(\s|>)/i.test(t[0])&&(this.lexer.state.inRawBlock=!1),{type:"html",raw:t[0],inLink:this.lexer.state.inLink,inRawBlock:this.lexer.state.inRawBlock,block:!1,text:t[0]}}link(e){const t=this.rules.inline.link.exec(e);if(t){const e=t[2].trim();if(!this.options.pedantic&&/^</.test(e)){if(!/>$/.test(e))return;const t=d(e.slice(0,-1),"\\");if((e.length-t.length)%2==0)return}else{const e=function(e,t){if(-1===e.indexOf(t[1]))return-1;let n=0;for(let s=0;s<e.length;s++)if("\\"===e[s])s++;else if(e[s]===t[0])n++;else if(e[s]===t[1]&&(n--,n<0))return s;return-1}(t[2],"()");if(e>-1){const n=(0===t[0].indexOf("!")?5:4)+t[1].length+e;t[2]=t[2].substring(0,e),t[0]=t[0].substring(0,n).trim(),t[3]=""}}let n=t[2],s="";if(this.options.pedantic){const e=/^([^'"]*[^\s])\s+(['"])(.*)\2/.exec(n);e&&(n=e[1],s=e[3])}else s=t[3]?t[3].slice(1,-1):"";return n=n.trim(),/^</.test(n)&&(n=this.options.pedantic&&!/>$/.test(e)?n.slice(1):n.slice(1,-1)),x(t,{href:n?n.replace(this.rules.inline.anyPunctuation,"$1"):n,title:s?s.replace(this.rules.inline.anyPunctuation,"$1"):s},t[0],this.lexer)}}reflink(e,t){let n;if((n=this.rules.inline.reflink.exec(e))||(n=this.rules.inline.nolink.exec(e))){const e=t[(n[2]||n[1]).replace(/\s+/g," ").toLowerCase()];if(!e){const e=n[0].charAt(0);return{type:"text",raw:e,text:e}}return x(n,e,n[0],this.lexer)}}emStrong(e,t,n=""){let s=this.rules.inline.emStrongLDelim.exec(e);if(!s)return;if(s[3]&&n.match(/[\p{L}\p{N}]/u))return;if(!(s[1]||s[2]||"")||!n||this.rules.inline.punctuation.exec(n)){const n=[...s[0]].length-1;let r,i,l=n,o=0;const a="*"===s[0][0]?this.rules.inline.emStrongRDelimAst:this.rules.inline.emStrongRDelimUnd;for(a.lastIndex=0,t=t.slice(-1*e.length+n);null!=(s=a.exec(t));){if(r=s[1]||s[2]||s[3]||s[4]||s[5]||s[6],!r)continue;if(i=[...r].length,s[3]||s[4]){l+=i;continue}if((s[5]||s[6])&&n%3&&!((n+i)%3)){o+=i;continue}if(l-=i,l>0)continue;i=Math.min(i,i+l+o);const t=[...s[0]][0].length,a=e.slice(0,n+s.index+t+i);if(Math.min(n,i)%2){const e=a.slice(1,-1);return{type:"em",raw:a,text:e,tokens:this.lexer.inlineTokens(e)}}const c=a.slice(2,-2);return{type:"strong",raw:a,text:c,tokens:this.lexer.inlineTokens(c)}}}}codespan(e){const t=this.rules.inline.code.exec(e);if(t){let e=t[2].replace(/\n/g," ");const n=/[^ ]/.test(e),s=/^ /.test(e)&&/ $/.test(e);return n&&s&&(e=e.substring(1,e.length-1)),e=c(e,!0),{type:"codespan",raw:t[0],text:e}}}br(e){const t=this.rules.inline.br.exec(e);if(t)return{type:"br",raw:t[0]}}del(e){const t=this.rules.inline.del.exec(e);if(t)return{type:"del",raw:t[0],text:t[2],tokens:this.lexer.inlineTokens(t[2])}}autolink(e){const t=this.rules.inline.autolink.exec(e);if(t){let e,n;return"@"===t[2]?(e=c(t[1]),n="mailto:"+e):(e=c(t[1]),n=e),{type:"link",raw:t[0],text:e,href:n,tokens:[{type:"text",raw:e,text:e}]}}}url(e){let t;if(t=this.rules.inline.url.exec(e)){let e,n;if("@"===t[2])e=c(t[0]),n="mailto:"+e;else{let s;do{s=t[0],t[0]=this.rules.inline._backpedal.exec(t[0])?.[0]??""}while(s!==t[0]);e=c(t[0]),n="www."===t[1]?"http://"+t[0]:t[0]}return{type:"link",raw:t[0],text:e,href:n,tokens:[{type:"text",raw:e,text:e}]}}}inlineText(e){const t=this.rules.inline.text.exec(e);if(t){let e;return e=this.lexer.state.inRawBlock?t[0]:c(t[0]),{type:"text",raw:t[0],text:e}}}}const w=/^ {0,3}((?:-[\t ]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})(?:\n+|$)/,m=/(?:[*+-]|\d{1,9}[.)])/,y=u(/^(?!bull |blockCode|fences|blockquote|heading|html)((?:.|\n(?!\s*?\n|bull |blockCode|fences|blockquote|heading|html))+?)\n {0,3}(=+|-+) *(?:\n+|$)/).replace(/bull/g,m).replace(/blockCode/g,/ {4}/).replace(/fences/g,/ {0,3}(?:`{3,}|~{3,})/).replace(/blockquote/g,/ {0,3}>/).replace(/heading/g,/ {0,3}#{1,6}/).replace(/html/g,/ {0,3}<[^\n>]+>\n/).getRegex(),$=/^([^\n]+(?:\n(?!hr|heading|lheading|blockquote|fences|list|html|table| +\n)[^\n]+)*)/,z=/(?!\s*\])(?:\\.|[^\[\]\\])+/,T=u(/^ {0,3}\[(label)\]: *(?:\n *)?([^<\s][^\s]*|<.*?>)(?:(?: +(?:\n *)?| *\n *)(title))? *(?:\n+|$)/).replace("label",z).replace("title",/(?:"(?:\\"?|[^"\\])*"|'[^'\n]*(?:\n[^'\n]+)*\n?'|\([^()]*\))/).getRegex(),R=u(/^( {0,3}bull)([ \t][^\n]+?)?(?:\n|$)/).replace(/bull/g,m).getRegex(),_="address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul",A=/<!--(?:-?>|[\s\S]*?(?:-->|$))/,S=u("^ {0,3}(?:<(script|pre|style|textarea)[\\s>][\\s\\S]*?(?:</\\1>[^\\n]*\\n+|$)|comment[^\\n]*(\\n+|$)|<\\?[\\s\\S]*?(?:\\?>\\n*|$)|<![A-Z][\\s\\S]*?(?:>\\n*|$)|<!\\[CDATA\\[[\\s\\S]*?(?:\\]\\]>\\n*|$)|</?(tag)(?: +|\\n|/?>)[\\s\\S]*?(?:(?:\\n *)+\\n|$)|<(?!script|pre|style|textarea)([a-z][\\w-]*)(?:attribute)*? */?>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:(?:\\n *)+\\n|$)|</(?!script|pre|style|textarea)[a-z][\\w-]*\\s*>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:(?:\\n *)+\\n|$))","i").replace("comment",A).replace("tag",_).replace("attribute",/ +[a-zA-Z:_][\w.:-]*(?: *= *"[^"\n]*"| *= *'[^'\n]*'| *= *[^\s"'=<>`]+)?/).getRegex(),I=u($).replace("hr",w).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("|lheading","").replace("|table","").replace("blockquote"," {0,3}>").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list"," {0,3}(?:[*+-]|1[.)]) ").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",_).getRegex(),E={blockquote:u(/^( {0,3}> ?(paragraph|[^\n]*)(?:\n|$))+/).replace("paragraph",I).getRegex(),code:/^( {4}[^\n]+(?:\n(?: *(?:\n|$))*)?)+/,def:T,fences:/^ {0,3}(`{3,}(?=[^`\n]*(?:\n|$))|~{3,})([^\n]*)(?:\n|$)(?:|([\s\S]*?)(?:\n|$))(?: {0,3}\1[~`]* *(?=\n|$)|$)/,heading:/^ {0,3}(#{1,6})(?=\s|$)(.*)(?:\n+|$)/,hr:w,html:S,lheading:y,list:R,newline:/^(?: *(?:\n|$))+/,paragraph:I,table:g,text:/^[^\n]+/},q=u("^ *([^\\n ].*)\\n {0,3}((?:\\| *)?:?-+:? *(?:\\| *:?-+:? *)*(?:\\| *)?)(?:\\n((?:(?! *\\n|hr|heading|blockquote|code|fences|list|html).*(?:\\n|$))*)\\n*|$)").replace("hr",w).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("blockquote"," {0,3}>").replace("code"," {4}[^\\n]").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list"," {0,3}(?:[*+-]|1[.)]) ").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",_).getRegex(),Z={...E,table:q,paragraph:u($).replace("hr",w).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("|lheading","").replace("table",q).replace("blockquote"," {0,3}>").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list"," {0,3}(?:[*+-]|1[.)]) ").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",_).getRegex()},L={...E,html:u("^ *(?:comment *(?:\\n|\\s*$)|<(tag)[\\s\\S]+?</\\1> *(?:\\n{2,}|\\s*$)|<tag(?:\"[^\"]*\"|'[^']*'|\\s[^'\"/>\\s]*)*?/?> *(?:\\n{2,}|\\s*$))").replace("comment",A).replace(/tag/g,"(?!(?:a|em|strong|small|s|cite|q|dfn|abbr|data|time|code|var|samp|kbd|sub|sup|i|b|u|mark|ruby|rt|rp|bdi|bdo|span|br|wbr|ins|del|img)\\b)\\w+(?!:|[^\\w\\s@]*@)\\b").getRegex(),def:/^ *\[([^\]]+)\]: *<?([^\s>]+)>?(?: +(["(][^\n]+[")]))? *(?:\n+|$)/,heading:/^(#{1,6})(.*)(?:\n+|$)/,fences:g,lheading:/^(.+?)\n {0,3}(=+|-+) *(?:\n+|$)/,paragraph:u($).replace("hr",w).replace("heading"," *#{1,6} *[^\n]").replace("lheading",y).replace("|table","").replace("blockquote"," {0,3}>").replace("|fences","").replace("|list","").replace("|html","").replace("|tag","").getRegex()},P=/^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/,v=/^( {2,}|\\)\n(?!\s*$)/,Q="\\p{P}\\p{S}",B=u(/^((?![*_])[\spunctuation])/,"u").replace(/punctuation/g,Q).getRegex(),C=u(/^(?:\*+(?:((?!\*)[punct])|[^\s*]))|^_+(?:((?!_)[punct])|([^\s_]))/,"u").replace(/punct/g,Q).getRegex(),M=u("^[^_*]*?__[^_*]*?\\*[^_*]*?(?=__)|[^*]+(?=[^*])|(?!\\*)[punct](\\*+)(?=[\\s]|$)|[^punct\\s](\\*+)(?!\\*)(?=[punct\\s]|$)|(?!\\*)[punct\\s](\\*+)(?=[^punct\\s])|[\\s](\\*+)(?!\\*)(?=[punct])|(?!\\*)[punct](\\*+)(?!\\*)(?=[punct])|[^punct\\s](\\*+)(?=[^punct\\s])","gu").replace(/punct/g,Q).getRegex(),O=u("^[^_*]*?\\*\\*[^_*]*?_[^_*]*?(?=\\*\\*)|[^_]+(?=[^_])|(?!_)[punct](_+)(?=[\\s]|$)|[^punct\\s](_+)(?!_)(?=[punct\\s]|$)|(?!_)[punct\\s](_+)(?=[^punct\\s])|[\\s](_+)(?!_)(?=[punct])|(?!_)[punct](_+)(?!_)(?=[punct])","gu").replace(/punct/g,Q).getRegex(),j=u(/\\([punct])/,"gu").replace(/punct/g,Q).getRegex(),D=u(/^<(scheme:[^\s\x00-\x1f<>]*|email)>/).replace("scheme",/[a-zA-Z][a-zA-Z0-9+.-]{1,31}/).replace("email",/[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+(@)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(?![-_])/).getRegex(),H=u(A).replace("(?:--\x3e|$)","--\x3e").getRegex(),F=u("^comment|^</[a-zA-Z][\\w:-]*\\s*>|^<[a-zA-Z][\\w-]*(?:attribute)*?\\s*/?>|^<\\?[\\s\\S]*?\\?>|^<![a-zA-Z]+\\s[\\s\\S]*?>|^<!\\[CDATA\\[[\\s\\S]*?\\]\\]>").replace("comment",H).replace("attribute",/\s+[a-zA-Z:_][\w.:-]*(?:\s*=\s*"[^"]*"|\s*=\s*'[^']*'|\s*=\s*[^\s"'=<>`]+)?/).getRegex(),U=/(?:\[(?:\\.|[^\[\]\\])*\]|\\.|`[^`]*`|[^\[\]\\`])*?/,X=u(/^!?\[(label)\]\(\s*(href)(?:\s+(title))?\s*\)/).replace("label",U).replace("href",/<(?:\\.|[^\n<>\\])+>|[^\s\x00-\x1f]*/).replace("title",/"(?:\\"?|[^"\\])*"|'(?:\\'?|[^'\\])*'|\((?:\\\)?|[^)\\])*\)/).getRegex(),N=u(/^!?\[(label)\]\[(ref)\]/).replace("label",U).replace("ref",z).getRegex(),G=u(/^!?\[(ref)\](?:\[\])?/).replace("ref",z).getRegex(),J={_backpedal:g,anyPunctuation:j,autolink:D,blockSkip:/\[[^[\]]*?\]\([^\(\)]*?\)|`[^`]*?`|<[^<>]*?>/g,br:v,code:/^(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/,del:g,emStrongLDelim:C,emStrongRDelimAst:M,emStrongRDelimUnd:O,escape:P,link:X,nolink:G,punctuation:B,reflink:N,reflinkSearch:u("reflink|nolink(?!\\()","g").replace("reflink",N).replace("nolink",G).getRegex(),tag:F,text:/^(`+|[^`])(?:(?= {2,}\n)|[\s\S]*?(?:(?=[\\<!\[`*_]|\b_|$)|[^ ](?= {2,}\n)))/,url:g},K={...J,link:u(/^!?\[(label)\]\((.*?)\)/).replace("label",U).getRegex(),reflink:u(/^!?\[(label)\]\s*\[([^\]]*)\]/).replace("label",U).getRegex()},V={...J,escape:u(P).replace("])","~|])").getRegex(),url:u(/^((?:ftp|https?):\/\/|www\.)(?:[a-zA-Z0-9\-]+\.?)+[^\s<]*|^email/,"i").replace("email",/[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![-_])/).getRegex(),_backpedal:/(?:[^?!.,:;*_'"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_'"~)]+(?!$))+/,del:/^(~~?)(?=[^\s~])([\s\S]*?[^\s~])\1(?=[^~]|$)/,text:/^([`~]+|[^`~])(?:(?= {2,}\n)|(?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)|[\s\S]*?(?:(?=[\\<!\[`*~_]|\b_|https?:\/\/|ftp:\/\/|www\.|$)|[^ ](?= {2,}\n)|[^a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-](?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)))/},W={...V,br:u(v).replace("{2,}","*").getRegex(),text:u(V.text).replace("\\b_","\\b_| {2,}\\n").replace(/\{2,\}/g,"*").getRegex()},Y={normal:E,gfm:Z,pedantic:L},ee={normal:J,gfm:V,breaks:W,pedantic:K};class te{tokens;options;state;tokenizer;inlineQueue;constructor(t){this.tokens=[],this.tokens.links=Object.create(null),this.options=t||e.defaults,this.options.tokenizer=this.options.tokenizer||new b,this.tokenizer=this.options.tokenizer,this.tokenizer.options=this.options,this.tokenizer.lexer=this,this.inlineQueue=[],this.state={inLink:!1,inRawBlock:!1,top:!0};const n={block:Y.normal,inline:ee.normal};this.options.pedantic?(n.block=Y.pedantic,n.inline=ee.pedantic):this.options.gfm&&(n.block=Y.gfm,this.options.breaks?n.inline=ee.breaks:n.inline=ee.gfm),this.tokenizer.rules=n}static get rules(){return{block:Y,inline:ee}}static lex(e,t){return new te(t).lex(e)}static lexInline(e,t){return new te(t).inlineTokens(e)}lex(e){e=e.replace(/\r\n|\r/g,"\n"),this.blockTokens(e,this.tokens);for(let e=0;e<this.inlineQueue.length;e++){const t=this.inlineQueue[e];this.inlineTokens(t.src,t.tokens)}return this.inlineQueue=[],this.tokens}blockTokens(e,t=[],n=!1){let s,r,i;for(e=this.options.pedantic?e.replace(/\t/g,"    ").replace(/^ +$/gm,""):e.replace(/^( *)(\t+)/gm,((e,t,n)=>t+"    ".repeat(n.length)));e;)if(!(this.options.extensions&&this.options.extensions.block&&this.options.extensions.block.some((n=>!!(s=n.call({lexer:this},e,t))&&(e=e.substring(s.raw.length),t.push(s),!0)))))if(s=this.tokenizer.space(e))e=e.substring(s.raw.length),1===s.raw.length&&t.length>0?t[t.length-1].raw+="\n":t.push(s);else if(s=this.tokenizer.code(e))e=e.substring(s.raw.length),r=t[t.length-1],!r||"paragraph"!==r.type&&"text"!==r.type?t.push(s):(r.raw+="\n"+s.raw,r.text+="\n"+s.text,this.inlineQueue[this.inlineQueue.length-1].src=r.text);else if(s=this.tokenizer.fences(e))e=e.substring(s.raw.length),t.push(s);else if(s=this.tokenizer.heading(e))e=e.substring(s.raw.length),t.push(s);else if(s=this.tokenizer.hr(e))e=e.substring(s.raw.length),t.push(s);else if(s=this.tokenizer.blockquote(e))e=e.substring(s.raw.length),t.push(s);else if(s=this.tokenizer.list(e))e=e.substring(s.raw.length),t.push(s);else if(s=this.tokenizer.html(e))e=e.substring(s.raw.length),t.push(s);else if(s=this.tokenizer.def(e))e=e.substring(s.raw.length),r=t[t.length-1],!r||"paragraph"!==r.type&&"text"!==r.type?this.tokens.links[s.tag]||(this.tokens.links[s.tag]={href:s.href,title:s.title}):(r.raw+="\n"+s.raw,r.text+="\n"+s.raw,this.inlineQueue[this.inlineQueue.length-1].src=r.text);else if(s=this.tokenizer.table(e))e=e.substring(s.raw.length),t.push(s);else if(s=this.tokenizer.lheading(e))e=e.substring(s.raw.length),t.push(s);else{if(i=e,this.options.extensions&&this.options.extensions.startBlock){let t=1/0;const n=e.slice(1);let s;this.options.extensions.startBlock.forEach((e=>{s=e.call({lexer:this},n),"number"==typeof s&&s>=0&&(t=Math.min(t,s))})),t<1/0&&t>=0&&(i=e.substring(0,t+1))}if(this.state.top&&(s=this.tokenizer.paragraph(i)))r=t[t.length-1],n&&"paragraph"===r?.type?(r.raw+="\n"+s.raw,r.text+="\n"+s.text,this.inlineQueue.pop(),this.inlineQueue[this.inlineQueue.length-1].src=r.text):t.push(s),n=i.length!==e.length,e=e.substring(s.raw.length);else if(s=this.tokenizer.text(e))e=e.substring(s.raw.length),r=t[t.length-1],r&&"text"===r.type?(r.raw+="\n"+s.raw,r.text+="\n"+s.text,this.inlineQueue.pop(),this.inlineQueue[this.inlineQueue.length-1].src=r.text):t.push(s);else if(e){const t="Infinite loop on byte: "+e.charCodeAt(0);if(this.options.silent){console.error(t);break}throw new Error(t)}}return this.state.top=!0,t}inline(e,t=[]){return this.inlineQueue.push({src:e,tokens:t}),t}inlineTokens(e,t=[]){let n,s,r,i,l,o,a=e;if(this.tokens.links){const e=Object.keys(this.tokens.links);if(e.length>0)for(;null!=(i=this.tokenizer.rules.inline.reflinkSearch.exec(a));)e.includes(i[0].slice(i[0].lastIndexOf("[")+1,-1))&&(a=a.slice(0,i.index)+"["+"a".repeat(i[0].length-2)+"]"+a.slice(this.tokenizer.rules.inline.reflinkSearch.lastIndex))}for(;null!=(i=this.tokenizer.rules.inline.blockSkip.exec(a));)a=a.slice(0,i.index)+"["+"a".repeat(i[0].length-2)+"]"+a.slice(this.tokenizer.rules.inline.blockSkip.lastIndex);for(;null!=(i=this.tokenizer.rules.inline.anyPunctuation.exec(a));)a=a.slice(0,i.index)+"++"+a.slice(this.tokenizer.rules.inline.anyPunctuation.lastIndex);for(;e;)if(l||(o=""),l=!1,!(this.options.extensions&&this.options.extensions.inline&&this.options.extensions.inline.some((s=>!!(n=s.call({lexer:this},e,t))&&(e=e.substring(n.raw.length),t.push(n),!0)))))if(n=this.tokenizer.escape(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.tag(e))e=e.substring(n.raw.length),s=t[t.length-1],s&&"text"===n.type&&"text"===s.type?(s.raw+=n.raw,s.text+=n.text):t.push(n);else if(n=this.tokenizer.link(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.reflink(e,this.tokens.links))e=e.substring(n.raw.length),s=t[t.length-1],s&&"text"===n.type&&"text"===s.type?(s.raw+=n.raw,s.text+=n.text):t.push(n);else if(n=this.tokenizer.emStrong(e,a,o))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.codespan(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.br(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.del(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.autolink(e))e=e.substring(n.raw.length),t.push(n);else if(this.state.inLink||!(n=this.tokenizer.url(e))){if(r=e,this.options.extensions&&this.options.extensions.startInline){let t=1/0;const n=e.slice(1);let s;this.options.extensions.startInline.forEach((e=>{s=e.call({lexer:this},n),"number"==typeof s&&s>=0&&(t=Math.min(t,s))})),t<1/0&&t>=0&&(r=e.substring(0,t+1))}if(n=this.tokenizer.inlineText(r))e=e.substring(n.raw.length),"_"!==n.raw.slice(-1)&&(o=n.raw.slice(-1)),l=!0,s=t[t.length-1],s&&"text"===s.type?(s.raw+=n.raw,s.text+=n.text):t.push(n);else if(e){const t="Infinite loop on byte: "+e.charCodeAt(0);if(this.options.silent){console.error(t);break}throw new Error(t)}}else e=e.substring(n.raw.length),t.push(n);return t}}class ne{options;parser;constructor(t){this.options=t||e.defaults}space(e){return""}code({text:e,lang:t,escaped:n}){const s=(t||"").match(/^\S*/)?.[0],r=e.replace(/\n$/,"")+"\n";return s?'<pre><code class="language-'+c(s)+'">'+(n?r:c(r,!0))+"</code></pre>\n":"<pre><code>"+(n?r:c(r,!0))+"</code></pre>\n"}blockquote({tokens:e}){return`<blockquote>\n${this.parser.parse(e)}</blockquote>\n`}html({text:e}){return e}heading({tokens:e,depth:t}){return`<h${t}>${this.parser.parseInline(e)}</h${t}>\n`}hr(e){return"<hr>\n"}list(e){const t=e.ordered,n=e.start;let s="";for(let t=0;t<e.items.length;t++){const n=e.items[t];s+=this.listitem(n)}const r=t?"ol":"ul";return"<"+r+(t&&1!==n?' start="'+n+'"':"")+">\n"+s+"</"+r+">\n"}listitem(e){let t="";if(e.task){const n=this.checkbox({checked:!!e.checked});e.loose?e.tokens.length>0&&"paragraph"===e.tokens[0].type?(e.tokens[0].text=n+" "+e.tokens[0].text,e.tokens[0].tokens&&e.tokens[0].tokens.length>0&&"text"===e.tokens[0].tokens[0].type&&(e.tokens[0].tokens[0].text=n+" "+e.tokens[0].tokens[0].text)):e.tokens.unshift({type:"text",raw:n+" ",text:n+" "}):t+=n+" "}return t+=this.parser.parse(e.tokens,!!e.loose),`<li>${t}</li>\n`}checkbox({checked:e}){return"<input "+(e?'checked="" ':"")+'disabled="" type="checkbox">'}paragraph({tokens:e}){return`<p>${this.parser.parseInline(e)}</p>\n`}table(e){let t="",n="";for(let t=0;t<e.header.length;t++)n+=this.tablecell(e.header[t]);t+=this.tablerow({text:n});let s="";for(let t=0;t<e.rows.length;t++){const r=e.rows[t];n="";for(let e=0;e<r.length;e++)n+=this.tablecell(r[e]);s+=this.tablerow({text:n})}return s&&(s=`<tbody>${s}</tbody>`),"<table>\n<thead>\n"+t+"</thead>\n"+s+"</table>\n"}tablerow({text:e}){return`<tr>\n${e}</tr>\n`}tablecell(e){const t=this.parser.parseInline(e.tokens),n=e.header?"th":"td";return(e.align?`<${n} align="${e.align}">`:`<${n}>`)+t+`</${n}>\n`}strong({tokens:e}){return`<strong>${this.parser.parseInline(e)}</strong>`}em({tokens:e}){return`<em>${this.parser.parseInline(e)}</em>`}codespan({text:e}){return`<code>${e}</code>`}br(e){return"<br>"}del({tokens:e}){return`<del>${this.parser.parseInline(e)}</del>`}link({href:e,title:t,tokens:n}){const s=this.parser.parseInline(n),r=k(e);if(null===r)return s;let i='<a href="'+(e=r)+'"';return t&&(i+=' title="'+t+'"'),i+=">"+s+"</a>",i}image({href:e,title:t,text:n}){const s=k(e);if(null===s)return n;let r=`<img src="${e=s}" alt="${n}"`;return t&&(r+=` title="${t}"`),r+=">",r}text(e){return"tokens"in e&&e.tokens?this.parser.parseInline(e.tokens):e.text}}class se{strong({text:e}){return e}em({text:e}){return e}codespan({text:e}){return e}del({text:e}){return e}html({text:e}){return e}text({text:e}){return e}link({text:e}){return""+e}image({text:e}){return""+e}br(){return""}}class re{options;renderer;textRenderer;constructor(t){this.options=t||e.defaults,this.options.renderer=this.options.renderer||new ne,this.renderer=this.options.renderer,this.renderer.options=this.options,this.renderer.parser=this,this.textRenderer=new se}static parse(e,t){return new re(t).parse(e)}static parseInline(e,t){return new re(t).parseInline(e)}parse(e,t=!0){let n="";for(let s=0;s<e.length;s++){const r=e[s];if(this.options.extensions&&this.options.extensions.renderers&&this.options.extensions.renderers[r.type]){const e=r,t=this.options.extensions.renderers[e.type].call({parser:this},e);if(!1!==t||!["space","hr","heading","code","table","blockquote","list","html","paragraph","text"].includes(e.type)){n+=t||"";continue}}const i=r;switch(i.type){case"space":n+=this.renderer.space(i);continue;case"hr":n+=this.renderer.hr(i);continue;case"heading":n+=this.renderer.heading(i);continue;case"code":n+=this.renderer.code(i);continue;case"table":n+=this.renderer.table(i);continue;case"blockquote":n+=this.renderer.blockquote(i);continue;case"list":n+=this.renderer.list(i);continue;case"html":n+=this.renderer.html(i);continue;case"paragraph":n+=this.renderer.paragraph(i);continue;case"text":{let r=i,l=this.renderer.text(r);for(;s+1<e.length&&"text"===e[s+1].type;)r=e[++s],l+="\n"+this.renderer.text(r);n+=t?this.renderer.paragraph({type:"paragraph",raw:l,text:l,tokens:[{type:"text",raw:l,text:l}]}):l;continue}default:{const e='Token with "'+i.type+'" type was not found.';if(this.options.silent)return console.error(e),"";throw new Error(e)}}}return n}parseInline(e,t){t=t||this.renderer;let n="";for(let s=0;s<e.length;s++){const r=e[s];if(this.options.extensions&&this.options.extensions.renderers&&this.options.extensions.renderers[r.type]){const e=this.options.extensions.renderers[r.type].call({parser:this},r);if(!1!==e||!["escape","html","link","image","strong","em","codespan","br","del","text"].includes(r.type)){n+=e||"";continue}}const i=r;switch(i.type){case"escape":case"text":n+=t.text(i);break;case"html":n+=t.html(i);break;case"link":n+=t.link(i);break;case"image":n+=t.image(i);break;case"strong":n+=t.strong(i);break;case"em":n+=t.em(i);break;case"codespan":n+=t.codespan(i);break;case"br":n+=t.br(i);break;case"del":n+=t.del(i);break;default:{const e='Token with "'+i.type+'" type was not found.';if(this.options.silent)return console.error(e),"";throw new Error(e)}}}return n}}class ie{options;constructor(t){this.options=t||e.defaults}static passThroughHooks=new Set(["preprocess","postprocess","processAllTokens"]);preprocess(e){return e}postprocess(e){return e}processAllTokens(e){return e}}class le{defaults={async:!1,breaks:!1,extensions:null,gfm:!0,hooks:null,pedantic:!1,renderer:null,silent:!1,tokenizer:null,walkTokens:null};options=this.setOptions;parse=this.#e(te.lex,re.parse);parseInline=this.#e(te.lexInline,re.parseInline);Parser=re;Renderer=ne;TextRenderer=se;Lexer=te;Tokenizer=b;Hooks=ie;constructor(...e){this.use(...e)}walkTokens(e,t){let n=[];for(const s of e)switch(n=n.concat(t.call(this,s)),s.type){case"table":{const e=s;for(const s of e.header)n=n.concat(this.walkTokens(s.tokens,t));for(const s of e.rows)for(const e of s)n=n.concat(this.walkTokens(e.tokens,t));break}case"list":{const e=s;n=n.concat(this.walkTokens(e.items,t));break}default:{const e=s;this.defaults.extensions?.childTokens?.[e.type]?this.defaults.extensions.childTokens[e.type].forEach((s=>{const r=e[s].flat(1/0);n=n.concat(this.walkTokens(r,t))})):e.tokens&&(n=n.concat(this.walkTokens(e.tokens,t)))}}return n}use(...e){const t=this.defaults.extensions||{renderers:{},childTokens:{}};return e.forEach((e=>{const n={...e};if(n.async=this.defaults.async||n.async||!1,e.extensions&&(e.extensions.forEach((e=>{if(!e.name)throw new Error("extension name required");if("renderer"in e){const n=t.renderers[e.name];t.renderers[e.name]=n?function(...t){let s=e.renderer.apply(this,t);return!1===s&&(s=n.apply(this,t)),s}:e.renderer}if("tokenizer"in e){if(!e.level||"block"!==e.level&&"inline"!==e.level)throw new Error("extension level must be 'block' or 'inline'");const n=t[e.level];n?n.unshift(e.tokenizer):t[e.level]=[e.tokenizer],e.start&&("block"===e.level?t.startBlock?t.startBlock.push(e.start):t.startBlock=[e.start]:"inline"===e.level&&(t.startInline?t.startInline.push(e.start):t.startInline=[e.start]))}"childTokens"in e&&e.childTokens&&(t.childTokens[e.name]=e.childTokens)})),n.extensions=t),e.renderer){const t=this.defaults.renderer||new ne(this.defaults);for(const n in e.renderer){if(!(n in t))throw new Error(`renderer '${n}' does not exist`);if(["options","parser"].includes(n))continue;const s=n;let r=e.renderer[s];e.useNewRenderer||(r=this.#t(r,s,t));const i=t[s];t[s]=(...e)=>{let n=r.apply(t,e);return!1===n&&(n=i.apply(t,e)),n||""}}n.renderer=t}if(e.tokenizer){const t=this.defaults.tokenizer||new b(this.defaults);for(const n in e.tokenizer){if(!(n in t))throw new Error(`tokenizer '${n}' does not exist`);if(["options","rules","lexer"].includes(n))continue;const s=n,r=e.tokenizer[s],i=t[s];t[s]=(...e)=>{let n=r.apply(t,e);return!1===n&&(n=i.apply(t,e)),n}}n.tokenizer=t}if(e.hooks){const t=this.defaults.hooks||new ie;for(const n in e.hooks){if(!(n in t))throw new Error(`hook '${n}' does not exist`);if("options"===n)continue;const s=n,r=e.hooks[s],i=t[s];ie.passThroughHooks.has(n)?t[s]=e=>{if(this.defaults.async)return Promise.resolve(r.call(t,e)).then((e=>i.call(t,e)));const n=r.call(t,e);return i.call(t,n)}:t[s]=(...e)=>{let n=r.apply(t,e);return!1===n&&(n=i.apply(t,e)),n}}n.hooks=t}if(e.walkTokens){const t=this.defaults.walkTokens,s=e.walkTokens;n.walkTokens=function(e){let n=[];return n.push(s.call(this,e)),t&&(n=n.concat(t.call(this,e))),n}}this.defaults={...this.defaults,...n}})),this}#t(e,t,n){switch(t){case"heading":return function(s){return s.type&&s.type===t?e.call(this,n.parser.parseInline(s.tokens),s.depth,function(e){return e.replace(h,((e,t)=>"colon"===(t=t.toLowerCase())?":":"#"===t.charAt(0)?"x"===t.charAt(1)?String.fromCharCode(parseInt(t.substring(2),16)):String.fromCharCode(+t.substring(1)):""))}(n.parser.parseInline(s.tokens,n.parser.textRenderer))):e.apply(this,arguments)};case"code":return function(n){return n.type&&n.type===t?e.call(this,n.text,n.lang,!!n.escaped):e.apply(this,arguments)};case"table":return function(n){if(!n.type||n.type!==t)return e.apply(this,arguments);let s="",r="";for(let e=0;e<n.header.length;e++)r+=this.tablecell({text:n.header[e].text,tokens:n.header[e].tokens,header:!0,align:n.align[e]});s+=this.tablerow({text:r});let i="";for(let e=0;e<n.rows.length;e++){const t=n.rows[e];r="";for(let e=0;e<t.length;e++)r+=this.tablecell({text:t[e].text,tokens:t[e].tokens,header:!1,align:n.align[e]});i+=this.tablerow({text:r})}return e.call(this,s,i)};case"blockquote":return function(n){if(!n.type||n.type!==t)return e.apply(this,arguments);const s=this.parser.parse(n.tokens);return e.call(this,s)};case"list":return function(n){if(!n.type||n.type!==t)return e.apply(this,arguments);const s=n.ordered,r=n.start,i=n.loose;let l="";for(let e=0;e<n.items.length;e++){const t=n.items[e],s=t.checked,r=t.task;let o="";if(t.task){const e=this.checkbox({checked:!!s});i?t.tokens.length>0&&"paragraph"===t.tokens[0].type?(t.tokens[0].text=e+" "+t.tokens[0].text,t.tokens[0].tokens&&t.tokens[0].tokens.length>0&&"text"===t.tokens[0].tokens[0].type&&(t.tokens[0].tokens[0].text=e+" "+t.tokens[0].tokens[0].text)):t.tokens.unshift({type:"text",text:e+" "}):o+=e+" "}o+=this.parser.parse(t.tokens,i),l+=this.listitem({type:"list_item",raw:o,text:o,task:r,checked:!!s,loose:i,tokens:t.tokens})}return e.call(this,l,s,r)};case"html":return function(n){return n.type&&n.type===t?e.call(this,n.text,n.block):e.apply(this,arguments)};case"paragraph":case"strong":case"em":case"del":return function(n){return n.type&&n.type===t?e.call(this,this.parser.parseInline(n.tokens)):e.apply(this,arguments)};case"escape":case"codespan":case"text":return function(n){return n.type&&n.type===t?e.call(this,n.text):e.apply(this,arguments)};case"link":return function(n){return n.type&&n.type===t?e.call(this,n.href,n.title,this.parser.parseInline(n.tokens)):e.apply(this,arguments)};case"image":return function(n){return n.type&&n.type===t?e.call(this,n.href,n.title,n.text):e.apply(this,arguments)}}return e}setOptions(e){return this.defaults={...this.defaults,...e},this}lexer(e,t){return te.lex(e,t??this.defaults)}parser(e,t){return re.parse(e,t??this.defaults)}#e(e,t){return(n,s)=>{const r={...s},i={...this.defaults,...r};!0===this.defaults.async&&!1===r.async&&(i.silent||console.warn("marked(): The async option was set to true by an extension. The async: false option sent to parse will be ignored."),i.async=!0);const l=this.#n(!!i.silent,!!i.async);if(null==n)return l(new Error("marked(): input parameter is undefined or null"));if("string"!=typeof n)return l(new Error("marked(): input parameter is of type "+Object.prototype.toString.call(n)+", string expected"));if(i.hooks&&(i.hooks.options=i),i.async)return Promise.resolve(i.hooks?i.hooks.preprocess(n):n).then((t=>e(t,i))).then((e=>i.hooks?i.hooks.processAllTokens(e):e)).then((e=>i.walkTokens?Promise.all(this.walkTokens(e,i.walkTokens)).then((()=>e)):e)).then((e=>t(e,i))).then((e=>i.hooks?i.hooks.postprocess(e):e)).catch(l);try{i.hooks&&(n=i.hooks.preprocess(n));let s=e(n,i);i.hooks&&(s=i.hooks.processAllTokens(s)),i.walkTokens&&this.walkTokens(s,i.walkTokens);let r=t(s,i);return i.hooks&&(r=i.hooks.postprocess(r)),r}catch(e){return l(e)}}}#n(e,t){return n=>{if(n.message+="\nPlease report this to https://github.com/markedjs/marked.",e){const e="<p>An error occurred:</p><pre>"+c(n.message+"",!0)+"</pre>";return t?Promise.resolve(e):e}if(t)return Promise.reject(n);throw n}}}const oe=new le;function ae(e,t){return oe.parse(e,t)}ae.options=ae.setOptions=function(e){return oe.setOptions(e),ae.defaults=oe.defaults,n(ae.defaults),ae},ae.getDefaults=t,ae.defaults=e.defaults,ae.use=function(...e){return oe.use(...e),ae.defaults=oe.defaults,n(ae.defaults),ae},ae.walkTokens=function(e,t){return oe.walkTokens(e,t)},ae.parseInline=oe.parseInline,ae.Parser=re,ae.parser=re.parse,ae.Renderer=ne,ae.TextRenderer=se,ae.Lexer=te,ae.lexer=te.lex,ae.Tokenizer=b,ae.Hooks=ie,ae.parse=ae;const ce=ae.options,he=ae.setOptions,pe=ae.use,ue=ae.walkTokens,ke=ae.parseInline,ge=ae,fe=re.parse,de=te.lex;e.Hooks=ie,e.Lexer=te,e.Marked=le,e.Parser=re,e.Renderer=ne,e.TextRenderer=se,e.Tokenizer=b,e.getDefaults=t,e.lexer=de,e.marked=ae,e.options=ce,e.parse=ge,e.parseInline=ke,e.parser=fe,e.setOptions=he,e.use=pe,e.walkTokens=ue}));
 
-</script>
-<script>
-/* @alenaksu/json-viewer v2.1.2 — bundled web component for the Full JSON tree.
- * https://github.com/alenaksu/json-viewer (MIT) */
-(function () {
-  'use strict';
-
-  var __defProp = Object.defineProperty;
-  var __decorateClass = (decorators, target, key, kind) => {
-    var result = void 0 ;
-    for (var i4 = decorators.length - 1, decorator; i4 >= 0; i4--)
-      if (decorator = decorators[i4])
-        result = (decorator(target, key, result) ) || result;
-    if (result) __defProp(target, key, result);
-    return result;
-  };
-
-  // node_modules/@lit/reactive-element/css-tag.js
-  var t = globalThis;
-  var e = t.ShadowRoot && (void 0 === t.ShadyCSS || t.ShadyCSS.nativeShadow) && "adoptedStyleSheets" in Document.prototype && "replace" in CSSStyleSheet.prototype;
-  var s = Symbol();
-  var o = /* @__PURE__ */ new WeakMap();
-  var n = class {
-    constructor(t3, e6, o4) {
-      if (this._$cssResult$ = true, o4 !== s) throw Error("CSSResult is not constructable. Use `unsafeCSS` or `css` instead.");
-      this.cssText = t3, this.t = e6;
-    }
-    get styleSheet() {
-      let t3 = this.o;
-      const s2 = this.t;
-      if (e && void 0 === t3) {
-        const e6 = void 0 !== s2 && 1 === s2.length;
-        e6 && (t3 = o.get(s2)), void 0 === t3 && ((this.o = t3 = new CSSStyleSheet()).replaceSync(this.cssText), e6 && o.set(s2, t3));
-      }
-      return t3;
-    }
-    toString() {
-      return this.cssText;
-    }
-  };
-  var r = (t3) => new n("string" == typeof t3 ? t3 : t3 + "", void 0, s);
-  var i = (t3, ...e6) => {
-    const o4 = 1 === t3.length ? t3[0] : e6.reduce((e7, s2, o5) => e7 + ((t4) => {
-      if (true === t4._$cssResult$) return t4.cssText;
-      if ("number" == typeof t4) return t4;
-      throw Error("Value passed to 'css' function must be a 'css' function result: " + t4 + ". Use 'unsafeCSS' to pass non-literal values, but take care to ensure page security.");
-    })(s2) + t3[o5 + 1], t3[0]);
-    return new n(o4, t3, s);
-  };
-  var S = (s2, o4) => {
-    if (e) s2.adoptedStyleSheets = o4.map((t3) => t3 instanceof CSSStyleSheet ? t3 : t3.styleSheet);
-    else for (const e6 of o4) {
-      const o5 = document.createElement("style"), n5 = t.litNonce;
-      void 0 !== n5 && o5.setAttribute("nonce", n5), o5.textContent = e6.cssText, s2.appendChild(o5);
-    }
-  };
-  var c = e ? (t3) => t3 : (t3) => t3 instanceof CSSStyleSheet ? ((t4) => {
-    let e6 = "";
-    for (const s2 of t4.cssRules) e6 += s2.cssText;
-    return r(e6);
-  })(t3) : t3;
-
-  // node_modules/@lit/reactive-element/reactive-element.js
-  var { is: i2, defineProperty: e2, getOwnPropertyDescriptor: r2, getOwnPropertyNames: h, getOwnPropertySymbols: o2, getPrototypeOf: n2 } = Object;
-  var a = globalThis;
-  var c2 = a.trustedTypes;
-  var l = c2 ? c2.emptyScript : "";
-  var p = a.reactiveElementPolyfillSupport;
-  var d = (t3, s2) => t3;
-  var u = { toAttribute(t3, s2) {
-    switch (s2) {
-      case Boolean:
-        t3 = t3 ? l : null;
-        break;
-      case Object:
-      case Array:
-        t3 = null == t3 ? t3 : JSON.stringify(t3);
-    }
-    return t3;
-  }, fromAttribute(t3, s2) {
-    let i4 = t3;
-    switch (s2) {
-      case Boolean:
-        i4 = null !== t3;
-        break;
-      case Number:
-        i4 = null === t3 ? null : Number(t3);
-        break;
-      case Object:
-      case Array:
-        try {
-          i4 = JSON.parse(t3);
-        } catch (t4) {
-          i4 = null;
-        }
-    }
-    return i4;
-  } };
-  var f = (t3, s2) => !i2(t3, s2);
-  var y = { attribute: true, type: String, converter: u, reflect: false, hasChanged: f };
-  Symbol.metadata ??= Symbol("metadata"), a.litPropertyMetadata ??= /* @__PURE__ */ new WeakMap();
-  var b = class extends HTMLElement {
-    static addInitializer(t3) {
-      this._$Ei(), (this.l ??= []).push(t3);
-    }
-    static get observedAttributes() {
-      return this.finalize(), this._$Eh && [...this._$Eh.keys()];
-    }
-    static createProperty(t3, s2 = y) {
-      if (s2.state && (s2.attribute = false), this._$Ei(), this.elementProperties.set(t3, s2), !s2.noAccessor) {
-        const i4 = Symbol(), r6 = this.getPropertyDescriptor(t3, i4, s2);
-        void 0 !== r6 && e2(this.prototype, t3, r6);
-      }
-    }
-    static getPropertyDescriptor(t3, s2, i4) {
-      const { get: e6, set: h4 } = r2(this.prototype, t3) ?? { get() {
-        return this[s2];
-      }, set(t4) {
-        this[s2] = t4;
-      } };
-      return { get() {
-        return e6?.call(this);
-      }, set(s3) {
-        const r6 = e6?.call(this);
-        h4.call(this, s3), this.requestUpdate(t3, r6, i4);
-      }, configurable: true, enumerable: true };
-    }
-    static getPropertyOptions(t3) {
-      return this.elementProperties.get(t3) ?? y;
-    }
-    static _$Ei() {
-      if (this.hasOwnProperty(d("elementProperties"))) return;
-      const t3 = n2(this);
-      t3.finalize(), void 0 !== t3.l && (this.l = [...t3.l]), this.elementProperties = new Map(t3.elementProperties);
-    }
-    static finalize() {
-      if (this.hasOwnProperty(d("finalized"))) return;
-      if (this.finalized = true, this._$Ei(), this.hasOwnProperty(d("properties"))) {
-        const t4 = this.properties, s2 = [...h(t4), ...o2(t4)];
-        for (const i4 of s2) this.createProperty(i4, t4[i4]);
-      }
-      const t3 = this[Symbol.metadata];
-      if (null !== t3) {
-        const s2 = litPropertyMetadata.get(t3);
-        if (void 0 !== s2) for (const [t4, i4] of s2) this.elementProperties.set(t4, i4);
-      }
-      this._$Eh = /* @__PURE__ */ new Map();
-      for (const [t4, s2] of this.elementProperties) {
-        const i4 = this._$Eu(t4, s2);
-        void 0 !== i4 && this._$Eh.set(i4, t4);
-      }
-      this.elementStyles = this.finalizeStyles(this.styles);
-    }
-    static finalizeStyles(s2) {
-      const i4 = [];
-      if (Array.isArray(s2)) {
-        const e6 = new Set(s2.flat(1 / 0).reverse());
-        for (const s3 of e6) i4.unshift(c(s3));
-      } else void 0 !== s2 && i4.push(c(s2));
-      return i4;
-    }
-    static _$Eu(t3, s2) {
-      const i4 = s2.attribute;
-      return false === i4 ? void 0 : "string" == typeof i4 ? i4 : "string" == typeof t3 ? t3.toLowerCase() : void 0;
-    }
-    constructor() {
-      super(), this._$Ep = void 0, this.isUpdatePending = false, this.hasUpdated = false, this._$Em = null, this._$Ev();
-    }
-    _$Ev() {
-      this._$ES = new Promise((t3) => this.enableUpdating = t3), this._$AL = /* @__PURE__ */ new Map(), this._$E_(), this.requestUpdate(), this.constructor.l?.forEach((t3) => t3(this));
-    }
-    addController(t3) {
-      (this._$EO ??= /* @__PURE__ */ new Set()).add(t3), void 0 !== this.renderRoot && this.isConnected && t3.hostConnected?.();
-    }
-    removeController(t3) {
-      this._$EO?.delete(t3);
-    }
-    _$E_() {
-      const t3 = /* @__PURE__ */ new Map(), s2 = this.constructor.elementProperties;
-      for (const i4 of s2.keys()) this.hasOwnProperty(i4) && (t3.set(i4, this[i4]), delete this[i4]);
-      t3.size > 0 && (this._$Ep = t3);
-    }
-    createRenderRoot() {
-      const t3 = this.shadowRoot ?? this.attachShadow(this.constructor.shadowRootOptions);
-      return S(t3, this.constructor.elementStyles), t3;
-    }
-    connectedCallback() {
-      this.renderRoot ??= this.createRenderRoot(), this.enableUpdating(true), this._$EO?.forEach((t3) => t3.hostConnected?.());
-    }
-    enableUpdating(t3) {
-    }
-    disconnectedCallback() {
-      this._$EO?.forEach((t3) => t3.hostDisconnected?.());
-    }
-    attributeChangedCallback(t3, s2, i4) {
-      this._$AK(t3, i4);
-    }
-    _$EC(t3, s2) {
-      const i4 = this.constructor.elementProperties.get(t3), e6 = this.constructor._$Eu(t3, i4);
-      if (void 0 !== e6 && true === i4.reflect) {
-        const r6 = (void 0 !== i4.converter?.toAttribute ? i4.converter : u).toAttribute(s2, i4.type);
-        this._$Em = t3, null == r6 ? this.removeAttribute(e6) : this.setAttribute(e6, r6), this._$Em = null;
-      }
-    }
-    _$AK(t3, s2) {
-      const i4 = this.constructor, e6 = i4._$Eh.get(t3);
-      if (void 0 !== e6 && this._$Em !== e6) {
-        const t4 = i4.getPropertyOptions(e6), r6 = "function" == typeof t4.converter ? { fromAttribute: t4.converter } : void 0 !== t4.converter?.fromAttribute ? t4.converter : u;
-        this._$Em = e6, this[e6] = r6.fromAttribute(s2, t4.type), this._$Em = null;
-      }
-    }
-    requestUpdate(t3, s2, i4) {
-      if (void 0 !== t3) {
-        if (i4 ??= this.constructor.getPropertyOptions(t3), !(i4.hasChanged ?? f)(this[t3], s2)) return;
-        this.P(t3, s2, i4);
-      }
-      false === this.isUpdatePending && (this._$ES = this._$ET());
-    }
-    P(t3, s2, i4) {
-      this._$AL.has(t3) || this._$AL.set(t3, s2), true === i4.reflect && this._$Em !== t3 && (this._$Ej ??= /* @__PURE__ */ new Set()).add(t3);
-    }
-    async _$ET() {
-      this.isUpdatePending = true;
-      try {
-        await this._$ES;
-      } catch (t4) {
-        Promise.reject(t4);
-      }
-      const t3 = this.scheduleUpdate();
-      return null != t3 && await t3, !this.isUpdatePending;
-    }
-    scheduleUpdate() {
-      return this.performUpdate();
-    }
-    performUpdate() {
-      if (!this.isUpdatePending) return;
-      if (!this.hasUpdated) {
-        if (this.renderRoot ??= this.createRenderRoot(), this._$Ep) {
-          for (const [t5, s3] of this._$Ep) this[t5] = s3;
-          this._$Ep = void 0;
-        }
-        const t4 = this.constructor.elementProperties;
-        if (t4.size > 0) for (const [s3, i4] of t4) true !== i4.wrapped || this._$AL.has(s3) || void 0 === this[s3] || this.P(s3, this[s3], i4);
-      }
-      let t3 = false;
-      const s2 = this._$AL;
-      try {
-        t3 = this.shouldUpdate(s2), t3 ? (this.willUpdate(s2), this._$EO?.forEach((t4) => t4.hostUpdate?.()), this.update(s2)) : this._$EU();
-      } catch (s3) {
-        throw t3 = false, this._$EU(), s3;
-      }
-      t3 && this._$AE(s2);
-    }
-    willUpdate(t3) {
-    }
-    _$AE(t3) {
-      this._$EO?.forEach((t4) => t4.hostUpdated?.()), this.hasUpdated || (this.hasUpdated = true, this.firstUpdated(t3)), this.updated(t3);
-    }
-    _$EU() {
-      this._$AL = /* @__PURE__ */ new Map(), this.isUpdatePending = false;
-    }
-    get updateComplete() {
-      return this.getUpdateComplete();
-    }
-    getUpdateComplete() {
-      return this._$ES;
-    }
-    shouldUpdate(t3) {
-      return true;
-    }
-    update(t3) {
-      this._$Ej &&= this._$Ej.forEach((t4) => this._$EC(t4, this[t4])), this._$EU();
-    }
-    updated(t3) {
-    }
-    firstUpdated(t3) {
-    }
-  };
-  b.elementStyles = [], b.shadowRootOptions = { mode: "open" }, b[d("elementProperties")] = /* @__PURE__ */ new Map(), b[d("finalized")] = /* @__PURE__ */ new Map(), p?.({ ReactiveElement: b }), (a.reactiveElementVersions ??= []).push("2.0.4");
-
-  // node_modules/lit-html/lit-html.js
-  var n3 = globalThis;
-  var c3 = n3.trustedTypes;
-  var h2 = c3 ? c3.createPolicy("lit-html", { createHTML: (t3) => t3 }) : void 0;
-  var f2 = "$lit$";
-  var v = `lit$${Math.random().toFixed(9).slice(2)}$`;
-  var m = "?" + v;
-  var _ = `<${m}>`;
-  var w = document;
-  var lt = () => w.createComment("");
-  var st = (t3) => null === t3 || "object" != typeof t3 && "function" != typeof t3;
-  var g = Array.isArray;
-  var $ = (t3) => g(t3) || "function" == typeof t3?.[Symbol.iterator];
-  var x = "[ 	\n\f\r]";
-  var T = /<(?:(!--|\/[^a-zA-Z])|(\/?[a-zA-Z][^>\s]*)|(\/?$))/g;
-  var E = /-->/g;
-  var k = />/g;
-  var O = RegExp(`>|${x}(?:([^\\s"'>=/]+)(${x}*=${x}*(?:[^ 	
-\f\r"'\`<>=]|("|')|))|$)`, "g");
-  var S2 = /'/g;
-  var j = /"/g;
-  var M = /^(?:script|style|textarea|title)$/i;
-  var P = (t3) => (i4, ...s2) => ({ _$litType$: t3, strings: i4, values: s2 });
-  var ke = P(1);
-  var R = Symbol.for("lit-noChange");
-  var D = Symbol.for("lit-nothing");
-  var V = /* @__PURE__ */ new WeakMap();
-  var I = w.createTreeWalker(w, 129);
-  function N(t3, i4) {
-    if (!g(t3) || !t3.hasOwnProperty("raw")) throw Error("invalid template strings array");
-    return void 0 !== h2 ? h2.createHTML(i4) : i4;
-  }
-  var U = (t3, i4) => {
-    const s2 = t3.length - 1, e6 = [];
-    let h4, o4 = 2 === i4 ? "<svg>" : 3 === i4 ? "<math>" : "", n5 = T;
-    for (let i5 = 0; i5 < s2; i5++) {
-      const s3 = t3[i5];
-      let r6, l2, c4 = -1, a2 = 0;
-      for (; a2 < s3.length && (n5.lastIndex = a2, l2 = n5.exec(s3), null !== l2); ) a2 = n5.lastIndex, n5 === T ? "!--" === l2[1] ? n5 = E : void 0 !== l2[1] ? n5 = k : void 0 !== l2[2] ? (M.test(l2[2]) && (h4 = RegExp("</" + l2[2], "g")), n5 = O) : void 0 !== l2[3] && (n5 = O) : n5 === O ? ">" === l2[0] ? (n5 = h4 ?? T, c4 = -1) : void 0 === l2[1] ? c4 = -2 : (c4 = n5.lastIndex - l2[2].length, r6 = l2[1], n5 = void 0 === l2[3] ? O : '"' === l2[3] ? j : S2) : n5 === j || n5 === S2 ? n5 = O : n5 === E || n5 === k ? n5 = T : (n5 = O, h4 = void 0);
-      const u2 = n5 === O && t3[i5 + 1].startsWith("/>") ? " " : "";
-      o4 += n5 === T ? s3 + _ : c4 >= 0 ? (e6.push(r6), s3.slice(0, c4) + f2 + s3.slice(c4) + v + u2) : s3 + v + (-2 === c4 ? i5 : u2);
-    }
-    return [N(t3, o4 + (t3[s2] || "<?>") + (2 === i4 ? "</svg>" : 3 === i4 ? "</math>" : "")), e6];
-  };
-  var B = class _B {
-    constructor({ strings: t3, _$litType$: i4 }, s2) {
-      let e6;
-      this.parts = [];
-      let h4 = 0, o4 = 0;
-      const n5 = t3.length - 1, r6 = this.parts, [l2, a2] = U(t3, i4);
-      if (this.el = _B.createElement(l2, s2), I.currentNode = this.el.content, 2 === i4 || 3 === i4) {
-        const t4 = this.el.content.firstChild;
-        t4.replaceWith(...t4.childNodes);
-      }
-      for (; null !== (e6 = I.nextNode()) && r6.length < n5; ) {
-        if (1 === e6.nodeType) {
-          if (e6.hasAttributes()) for (const t4 of e6.getAttributeNames()) if (t4.endsWith(f2)) {
-            const i5 = a2[o4++], s3 = e6.getAttribute(t4).split(v), n6 = /([.?@])?(.*)/.exec(i5);
-            r6.push({ type: 1, index: h4, name: n6[2], strings: s3, ctor: "." === n6[1] ? Y : "?" === n6[1] ? Z : "@" === n6[1] ? q : G }), e6.removeAttribute(t4);
-          } else t4.startsWith(v) && (r6.push({ type: 6, index: h4 }), e6.removeAttribute(t4));
-          if (M.test(e6.tagName)) {
-            const t4 = e6.textContent.split(v), i5 = t4.length - 1;
-            if (i5 > 0) {
-              e6.textContent = c3 ? c3.emptyScript : "";
-              for (let s3 = 0; s3 < i5; s3++) e6.append(t4[s3], lt()), I.nextNode(), r6.push({ type: 2, index: ++h4 });
-              e6.append(t4[i5], lt());
-            }
-          }
-        } else if (8 === e6.nodeType) if (e6.data === m) r6.push({ type: 2, index: h4 });
-        else {
-          let t4 = -1;
-          for (; -1 !== (t4 = e6.data.indexOf(v, t4 + 1)); ) r6.push({ type: 7, index: h4 }), t4 += v.length - 1;
-        }
-        h4++;
-      }
-    }
-    static createElement(t3, i4) {
-      const s2 = w.createElement("template");
-      return s2.innerHTML = t3, s2;
-    }
-  };
-  function z(t3, i4, s2 = t3, e6) {
-    if (i4 === R) return i4;
-    let h4 = void 0 !== e6 ? s2.o?.[e6] : s2.l;
-    const o4 = st(i4) ? void 0 : i4._$litDirective$;
-    return h4?.constructor !== o4 && (h4?._$AO?.(false), void 0 === o4 ? h4 = void 0 : (h4 = new o4(t3), h4._$AT(t3, s2, e6)), void 0 !== e6 ? (s2.o ??= [])[e6] = h4 : s2.l = h4), void 0 !== h4 && (i4 = z(t3, h4._$AS(t3, i4.values), h4, e6)), i4;
-  }
-  var F = class {
-    constructor(t3, i4) {
-      this._$AV = [], this._$AN = void 0, this._$AD = t3, this._$AM = i4;
-    }
-    get parentNode() {
-      return this._$AM.parentNode;
-    }
-    get _$AU() {
-      return this._$AM._$AU;
-    }
-    u(t3) {
-      const { el: { content: i4 }, parts: s2 } = this._$AD, e6 = (t3?.creationScope ?? w).importNode(i4, true);
-      I.currentNode = e6;
-      let h4 = I.nextNode(), o4 = 0, n5 = 0, r6 = s2[0];
-      for (; void 0 !== r6; ) {
-        if (o4 === r6.index) {
-          let i5;
-          2 === r6.type ? i5 = new et(h4, h4.nextSibling, this, t3) : 1 === r6.type ? i5 = new r6.ctor(h4, r6.name, r6.strings, this, t3) : 6 === r6.type && (i5 = new K(h4, this, t3)), this._$AV.push(i5), r6 = s2[++n5];
-        }
-        o4 !== r6?.index && (h4 = I.nextNode(), o4++);
-      }
-      return I.currentNode = w, e6;
-    }
-    p(t3) {
-      let i4 = 0;
-      for (const s2 of this._$AV) void 0 !== s2 && (void 0 !== s2.strings ? (s2._$AI(t3, s2, i4), i4 += s2.strings.length - 2) : s2._$AI(t3[i4])), i4++;
-    }
-  };
-  var et = class _et {
-    get _$AU() {
-      return this._$AM?._$AU ?? this.v;
-    }
-    constructor(t3, i4, s2, e6) {
-      this.type = 2, this._$AH = D, this._$AN = void 0, this._$AA = t3, this._$AB = i4, this._$AM = s2, this.options = e6, this.v = e6?.isConnected ?? true;
-    }
-    get parentNode() {
-      let t3 = this._$AA.parentNode;
-      const i4 = this._$AM;
-      return void 0 !== i4 && 11 === t3?.nodeType && (t3 = i4.parentNode), t3;
-    }
-    get startNode() {
-      return this._$AA;
-    }
-    get endNode() {
-      return this._$AB;
-    }
-    _$AI(t3, i4 = this) {
-      t3 = z(this, t3, i4), st(t3) ? t3 === D || null == t3 || "" === t3 ? (this._$AH !== D && this._$AR(), this._$AH = D) : t3 !== this._$AH && t3 !== R && this._(t3) : void 0 !== t3._$litType$ ? this.$(t3) : void 0 !== t3.nodeType ? this.T(t3) : $(t3) ? this.k(t3) : this._(t3);
-    }
-    O(t3) {
-      return this._$AA.parentNode.insertBefore(t3, this._$AB);
-    }
-    T(t3) {
-      this._$AH !== t3 && (this._$AR(), this._$AH = this.O(t3));
-    }
-    _(t3) {
-      this._$AH !== D && st(this._$AH) ? this._$AA.nextSibling.data = t3 : this.T(w.createTextNode(t3)), this._$AH = t3;
-    }
-    $(t3) {
-      const { values: i4, _$litType$: s2 } = t3, e6 = "number" == typeof s2 ? this._$AC(t3) : (void 0 === s2.el && (s2.el = B.createElement(N(s2.h, s2.h[0]), this.options)), s2);
-      if (this._$AH?._$AD === e6) this._$AH.p(i4);
-      else {
-        const t4 = new F(e6, this), s3 = t4.u(this.options);
-        t4.p(i4), this.T(s3), this._$AH = t4;
-      }
-    }
-    _$AC(t3) {
-      let i4 = V.get(t3.strings);
-      return void 0 === i4 && V.set(t3.strings, i4 = new B(t3)), i4;
-    }
-    k(t3) {
-      g(this._$AH) || (this._$AH = [], this._$AR());
-      const i4 = this._$AH;
-      let s2, e6 = 0;
-      for (const h4 of t3) e6 === i4.length ? i4.push(s2 = new _et(this.O(lt()), this.O(lt()), this, this.options)) : s2 = i4[e6], s2._$AI(h4), e6++;
-      e6 < i4.length && (this._$AR(s2 && s2._$AB.nextSibling, e6), i4.length = e6);
-    }
-    _$AR(t3 = this._$AA.nextSibling, i4) {
-      for (this._$AP?.(false, true, i4); t3 && t3 !== this._$AB; ) {
-        const i5 = t3.nextSibling;
-        t3.remove(), t3 = i5;
-      }
-    }
-    setConnected(t3) {
-      void 0 === this._$AM && (this.v = t3, this._$AP?.(t3));
-    }
-  };
-  var G = class {
-    get tagName() {
-      return this.element.tagName;
-    }
-    get _$AU() {
-      return this._$AM._$AU;
-    }
-    constructor(t3, i4, s2, e6, h4) {
-      this.type = 1, this._$AH = D, this._$AN = void 0, this.element = t3, this.name = i4, this._$AM = e6, this.options = h4, s2.length > 2 || "" !== s2[0] || "" !== s2[1] ? (this._$AH = Array(s2.length - 1).fill(new String()), this.strings = s2) : this._$AH = D;
-    }
-    _$AI(t3, i4 = this, s2, e6) {
-      const h4 = this.strings;
-      let o4 = false;
-      if (void 0 === h4) t3 = z(this, t3, i4, 0), o4 = !st(t3) || t3 !== this._$AH && t3 !== R, o4 && (this._$AH = t3);
-      else {
-        const e7 = t3;
-        let n5, r6;
-        for (t3 = h4[0], n5 = 0; n5 < h4.length - 1; n5++) r6 = z(this, e7[s2 + n5], i4, n5), r6 === R && (r6 = this._$AH[n5]), o4 ||= !st(r6) || r6 !== this._$AH[n5], r6 === D ? t3 = D : t3 !== D && (t3 += (r6 ?? "") + h4[n5 + 1]), this._$AH[n5] = r6;
-      }
-      o4 && !e6 && this.j(t3);
-    }
-    j(t3) {
-      t3 === D ? this.element.removeAttribute(this.name) : this.element.setAttribute(this.name, t3 ?? "");
-    }
-  };
-  var Y = class extends G {
-    constructor() {
-      super(...arguments), this.type = 3;
-    }
-    j(t3) {
-      this.element[this.name] = t3 === D ? void 0 : t3;
-    }
-  };
-  var Z = class extends G {
-    constructor() {
-      super(...arguments), this.type = 4;
-    }
-    j(t3) {
-      this.element.toggleAttribute(this.name, !!t3 && t3 !== D);
-    }
-  };
-  var q = class extends G {
-    constructor(t3, i4, s2, e6, h4) {
-      super(t3, i4, s2, e6, h4), this.type = 5;
-    }
-    _$AI(t3, i4 = this) {
-      if ((t3 = z(this, t3, i4, 0) ?? D) === R) return;
-      const s2 = this._$AH, e6 = t3 === D && s2 !== D || t3.capture !== s2.capture || t3.once !== s2.once || t3.passive !== s2.passive, h4 = t3 !== D && (s2 === D || e6);
-      e6 && this.element.removeEventListener(this.name, this, s2), h4 && this.element.addEventListener(this.name, this, t3), this._$AH = t3;
-    }
-    handleEvent(t3) {
-      "function" == typeof this._$AH ? this._$AH.call(this.options?.host ?? this.element, t3) : this._$AH.handleEvent(t3);
-    }
-  };
-  var K = class {
-    constructor(t3, i4, s2) {
-      this.element = t3, this.type = 6, this._$AN = void 0, this._$AM = i4, this.options = s2;
-    }
-    get _$AU() {
-      return this._$AM._$AU;
-    }
-    _$AI(t3) {
-      z(this, t3);
-    }
-  };
-  var Re = n3.litHtmlPolyfillSupport;
-  Re?.(B, et), (n3.litHtmlVersions ??= []).push("3.2.0");
-  var Q = (t3, i4, s2) => {
-    const e6 = s2?.renderBefore ?? i4;
-    let h4 = e6._$litPart$;
-    if (void 0 === h4) {
-      const t4 = s2?.renderBefore ?? null;
-      e6._$litPart$ = h4 = new et(i4.insertBefore(lt(), t4), t4, void 0, s2 ?? {});
-    }
-    return h4._$AI(t3), h4;
-  };
-
-  // node_modules/lit-element/lit-element.js
-  var h3 = class extends b {
-    constructor() {
-      super(...arguments), this.renderOptions = { host: this }, this.o = void 0;
-    }
-    createRenderRoot() {
-      const t3 = super.createRenderRoot();
-      return this.renderOptions.renderBefore ??= t3.firstChild, t3;
-    }
-    update(t3) {
-      const e6 = this.render();
-      this.hasUpdated || (this.renderOptions.isConnected = this.isConnected), super.update(t3), this.o = Q(e6, this.renderRoot, this.renderOptions);
-    }
-    connectedCallback() {
-      super.connectedCallback(), this.o?.setConnected(true);
-    }
-    disconnectedCallback() {
-      super.disconnectedCallback(), this.o?.setConnected(false);
-    }
-    render() {
-      return R;
-    }
-  };
-  h3._$litElement$ = true, h3["finalized"] = true, globalThis.litElementHydrateSupport?.({ LitElement: h3 });
-  var f3 = globalThis.litElementPolyfillSupport;
-  f3?.({ LitElement: h3 });
-  (globalThis.litElementVersions ??= []).push("4.1.0");
-
-  // node_modules/@lit/reactive-element/decorators/property.js
-  var o3 = { attribute: true, type: String, converter: u, reflect: false, hasChanged: f };
-  var r3 = (t3 = o3, e6, r6) => {
-    const { kind: n5, metadata: i4 } = r6;
-    let s2 = globalThis.litPropertyMetadata.get(i4);
-    if (void 0 === s2 && globalThis.litPropertyMetadata.set(i4, s2 = /* @__PURE__ */ new Map()), s2.set(r6.name, t3), "accessor" === n5) {
-      const { name: o4 } = r6;
-      return { set(r7) {
-        const n6 = e6.get.call(this);
-        e6.set.call(this, r7), this.requestUpdate(o4, n6, t3);
-      }, init(e7) {
-        return void 0 !== e7 && this.P(o4, void 0, t3), e7;
-      } };
-    }
-    if ("setter" === n5) {
-      const { name: o4 } = r6;
-      return function(r7) {
-        const n6 = this[o4];
-        e6.call(this, r7), this.requestUpdate(o4, n6, t3);
-      };
-    }
-    throw Error("Unsupported decorator location: " + n5);
-  };
-  function n4(t3) {
-    return (e6, o4) => "object" == typeof o4 ? r3(t3, e6, o4) : ((t4, e7, o5) => {
-      const r6 = e7.hasOwnProperty(o5);
-      return e7.constructor.createProperty(o5, r6 ? { ...t4, wrapped: true } : t4), r6 ? Object.getOwnPropertyDescriptor(e7, o5) : void 0;
-    })(t3, e6, o4);
-  }
-
-  // node_modules/@lit/reactive-element/decorators/state.js
-  function r4(r6) {
-    return n4({ ...r6, state: true, attribute: false });
-  }
-
-  // node_modules/@lit/reactive-element/decorators/base.js
-  var e3 = (e6, t3, c4) => (c4.configurable = true, c4.enumerable = true, Reflect.decorate && "object" != typeof t3 && Object.defineProperty(e6, t3, c4), c4);
-
-  // node_modules/@lit/reactive-element/decorators/query-all.js
-  var e4;
-  function r5(r6) {
-    return (n5, o4) => e3(n5, o4, { get() {
-      return (this.renderRoot ?? (e4 ??= document.createDocumentFragment())).querySelectorAll(r6);
-    } });
-  }
-
-  // node_modules/lit-html/directive.js
-  var t2 = { ATTRIBUTE: 1, CHILD: 2, PROPERTY: 3, BOOLEAN_ATTRIBUTE: 4, EVENT: 5, ELEMENT: 6 };
-  var e5 = (t3) => (...e6) => ({ _$litDirective$: t3, values: e6 });
-  var i3 = class {
-    constructor(t3) {
-    }
-    get _$AU() {
-      return this._$AM._$AU;
-    }
-    _$AT(t3, e6, i4) {
-      this.t = t3, this._$AM = e6, this.i = i4;
-    }
-    _$AS(t3, e6) {
-      return this.update(t3, e6);
-    }
-    update(t3, e6) {
-      return this.render(...e6);
-    }
-  };
-
-  // node_modules/lit-html/directives/class-map.js
-  var Rt = e5(class extends i3 {
-    constructor(s2) {
-      if (super(s2), s2.type !== t2.ATTRIBUTE || "class" !== s2.name || s2.strings?.length > 2) throw Error("`classMap()` can only be used in the `class` attribute and must be the only part in the attribute.");
-    }
-    render(t3) {
-      return " " + Object.keys(t3).filter((s2) => t3[s2]).join(" ") + " ";
-    }
-    update(t3, [s2]) {
-      if (void 0 === this.st) {
-        this.st = /* @__PURE__ */ new Set(), void 0 !== t3.strings && (this.nt = new Set(t3.strings.join(" ").split(/\s/).filter((t4) => "" !== t4)));
-        for (const t4 in s2) s2[t4] && !this.nt?.has(t4) && this.st.add(t4);
-        return this.render(s2);
-      }
-      const i4 = t3.element.classList;
-      for (const t4 of this.st) t4 in s2 || (i4.remove(t4), this.st.delete(t4));
-      for (const t4 in s2) {
-        const r6 = !!s2[t4];
-        r6 === this.st.has(t4) || this.nt?.has(t4) || (r6 ? (i4.add(t4), this.st.add(t4)) : (i4.remove(t4), this.st.delete(t4)));
-      }
-      return R;
-    }
-  });
-
-  // node_modules/lit-html/directives/map.js
-  function* oo(o4, f4) {
-    if (void 0 !== o4) {
-      let i4 = 0;
-      for (const t3 of o4) yield f4(t3, i4++);
-    }
-  }
-
-  // node_modules/lit-html/directives/when.js
-  function nn(n5, r6, t3) {
-    return n5 ? r6(n5) : t3?.(n5);
-  }
-
-  // src/utils.ts
-  function isRegex(value) {
-    return value instanceof RegExp;
-  }
-  function getType(value) {
-    return value === null ? "null" /* Null */ : Array.isArray(value) ? "array" /* Array */ : value.constructor.name.toLowerCase();
-  }
-  function isPrimitive(value) {
-    return value !== Object(value);
-  }
-  function generateNodePreview(node, { nodeCount = 3, maxLength = 15 } = {}) {
-    const isArray = Array.isArray(node);
-    const objectNodes = Object.keys(node);
-    const keys = objectNodes.slice(0, nodeCount);
-    const preview = [];
-    const getNodePreview = (nodeValue) => {
-      const nodeType = getType(nodeValue);
-      switch (nodeType) {
-        case "object" /* Object */:
-          return Object.keys(nodeValue).length === 0 ? "{ }" : "{ ... }";
-        case "array" /* Array */:
-          return nodeValue.length === 0 ? "[ ]" : "[ ... ]";
-        case "string" /* String */:
-          return `"${nodeValue.substring(0, maxLength)}${nodeValue.length > maxLength ? "..." : ""}"`;
-        default:
-          return String(nodeValue);
-      }
-    };
-    const childPreviews = [];
-    for (const key of keys) {
-      const nodePreview = [];
-      const nodeValue = node[key];
-      if (!isArray) nodePreview.push(`${key}: `);
-      nodePreview.push(getNodePreview(nodeValue));
-      childPreviews.push(nodePreview.join(""));
-    }
-    if (objectNodes.length > nodeCount) {
-      childPreviews.push("...");
-    }
-    preview.push(childPreviews.join(", "));
-    const previewText = preview.join("");
-    return isArray ? `[ ${previewText} ]` : `{ ${previewText} }`;
-  }
-  function* deepTraverse(obj) {
-    const stack = [[obj, "", []]];
-    while (stack.length) {
-      const [node, path, parents] = stack.shift();
-      if (path) {
-        yield [node, path, parents];
-      }
-      if (!isPrimitive(node)) {
-        for (const [key, value] of Object.entries(node)) {
-          stack.push([value, `${path}${path ? "." : ""}${key}`, [...parents, path]]);
-        }
-      }
-    }
-  }
-  function checkGlob(str, glob) {
-    const strParts = str.split(".");
-    const globaParts = glob.split(".");
-    const isStar = (s2) => s2 === "*";
-    const isGlobStar = (s2) => s2 === "**";
-    let strIndex = 0;
-    let globIndex = 0;
-    while (strIndex < strParts.length) {
-      const globPart = globaParts[globIndex];
-      const strPart = strParts[strIndex];
-      if (globPart === strPart || isStar(globPart)) {
-        globIndex++;
-        strIndex++;
-      } else if (isGlobStar(globPart)) {
-        globIndex++;
-        strIndex = strParts.length - (globaParts.length - globIndex);
-      } else {
-        return false;
-      }
-    }
-    return globIndex === globaParts.length;
-  }
-  var JSONConverter = {
-    fromAttribute: (value) => {
-      return value && value.trim() ? JSON.parse(value) : void 0;
-    },
-    toAttribute: (value) => {
-      return JSON.stringify(value);
-    }
-  };
-  var isDefined = (value) => value !== void 0;
-  var isMatchingPath = (path, criteria) => isRegex(criteria) ? !!path.match(criteria) : checkGlob(path, criteria);
-  var getValueByPath = (json, path) => path.split(".").reduce((acc, key) => acc[key], json);
-
-  // src/stateChange.ts
-  var toggleNode = (path, expanded) => (state) => ({
-    expanded: {
-      ...state.expanded,
-      [path]: isDefined(expanded) ? !!expanded : !state.expanded[path]
-    }
-  });
-  var expand = (regexOrGlob, isExpanded) => (_state, el) => {
-    const expanded = {};
-    if (regexOrGlob) {
-      for (const [, path, parents] of deepTraverse(el.data)) {
-        if (isMatchingPath(path, regexOrGlob)) {
-          expanded[path] = isExpanded;
-          parents.forEach((p2) => expanded[p2] = isExpanded);
-        }
-      }
-    }
-    return { expanded };
-  };
-  var filter = (regexOrGlob) => (_state, el) => {
-    const filtered = {};
-    if (regexOrGlob) {
-      for (const [, path, parents] of deepTraverse(el.data)) {
-        if (isMatchingPath(path, regexOrGlob)) {
-          filtered[path] = false;
-          parents.forEach((p2) => filtered[p2] = false);
-        } else {
-          filtered[path] = true;
-        }
-      }
-    }
-    return { filtered };
-  };
-  var resetFilter = () => () => ({ filtered: {} });
-  var highlight = (path) => () => ({
-    highlight: path
-  });
-
-  // src/JsonViewer.styles.ts
-  var JsonViewer_styles_default = i`
-    :where(:host) {
-        --background-color: #2a2f3a;
-        --color: #f8f8f2;
-        --string-color: #a3eea0;
-        --number-color: #d19a66;
-        --boolean-color: #4ba7ef;
-        --null-color: #df9cf3;
-        --property-color: #6fb3d2;
-        --preview-color: rgba(222, 175, 143, 0.9);
-        --highlight-color:  #c92a2a;
-        --outline-color: #e0e4e5;
-        --outline-width: 1px;
-        --outline-style: dotted;
-
-        --font-family: Nimbus Mono PS, Courier New, monospace;
-        --font-size: 1rem;
-        --line-height: 1.2rem;
-
-        --indent-size: 0.5rem;
-        --indentguide-size: 1px;
-        --indentguide-style: solid;
-        --indentguide-color: #495057;
-        --indentguide-color-active: #ced4da;
-        --indentguide: var(--indentguide-size) var(--indentguide-style) var(--indentguide-color);
-        --indentguide-active: var(--indentguide-size) var(--indentguide-style) var(--indentguide-color-active);
-    }
-
-    :host {
-        display: block;
-        background-color: var(--background-color);
-        color: var(--color);
-        font-family: var(--font-family);
-        font-size: var(--font-size);
-        line-height: var(--line-height);
-    }
-
-    :focus {
-        outline-color: var(--outline-color);
-        outline-width: var(--outline-width);
-        outline-style: var(--outline-style);
-    }
-
-    .preview {
-        color: var(--preview-color);
-    }
-
-    .null {
-        color: var(--null-color);
-    }
-
-    .key {
-        color: var(--property-color);
-        display: inline-flex;
-        align-items: flex-start;
-    }
-
-    .collapsable::before {
-        display: inline-flex;
-        font-size: 0.8em;
-        content: '▶';
-        width: var(--line-height);
-        height: var(--line-height);
-        align-items: center;
-        justify-content: center;
-
-        transition: transform 195ms ease-out;
-        transform: rotate(90deg);
-
-        color: inherit;
-    }
-
-    .collapsable--collapsed::before {
-        transform: rotate(0);
-    }
-
-    .collapsable {
-        cursor: pointer;
-        user-select: none;
-    }
-
-    .string {
-        color: var(--string-color);
-    }
-
-    .number {
-        color: var(--number-color);
-    }
-
-    .boolean {
-        color: var(--boolean-color);
-    }
-
-    ul {
-        padding: 0;
-        clear: both;
-    }
-
-    ul,
-    li {
-        list-style: none;
-        position: relative;
-    }
-
-    li ul > li {
-        position: relative;
-        margin-left: calc(var(--indent-size) + var(--line-height));
-        padding-left: 0px;
-    }
-
-    ul ul::before {
-        content: '';
-        border-left: var(--indentguide);
-        position: absolute;
-        left: calc(var(--line-height) / 2 - var(--indentguide-size));
-        top: 0.2rem;
-        bottom: 0.2rem;
-    }
-
-    ul ul:hover::before {
-        border-left: var(--indentguide-active);
-    }
-
-    mark {
-        background-color: var(--highlight-color);
-    }
-`;
-
-  // src/JsonViewer.ts
-  var JsonViewer = class extends h3 {
-    constructor() {
-      super();
-      this.state = {
-        expanded: {},
-        filtered: {},
-        highlight: null
-      };
-      this.lastFocusedItem = null;
-      this.#handlePropertyClick = (path) => (e6) => {
-        e6.preventDefault();
-        this.setState(toggleNode(path));
-      };
-      this.#handleFocusIn = (event) => {
-        const target = event.target;
-        if (event.target === this) {
-          this.#focusItem(this.lastFocusedItem || this.nodeElements[0]);
-        }
-        if (target.matches('[role="treeitem"]')) {
-          if (this.lastFocusedItem) {
-            this.lastFocusedItem.tabIndex = -1;
-          }
-          this.lastFocusedItem = target;
-          this.tabIndex = -1;
-          target.tabIndex = 0;
-        }
-      };
-      this.#handleFocusOut = (event) => {
-        const relatedTarget = event.relatedTarget;
-        if (!relatedTarget || !this.contains(relatedTarget)) {
-          this.tabIndex = 0;
-        }
-      };
-      this.addEventListener("focusin", this.#handleFocusIn);
-      this.addEventListener("focusout", this.#handleFocusOut);
-    }
-    static {
-      this.styles = [JsonViewer_styles_default];
-    }
-    static customRenderer(value, _path) {
-      return JSON.stringify(value);
-    }
-    async setState(stateFn) {
-      const currentState = this.state;
-      this.state = {
-        ...currentState,
-        ...stateFn(currentState, this)
-      };
-    }
-    connectedCallback() {
-      if (!this.hasAttribute("data") && !isDefined(this.data)) {
-        this.setAttribute("data", this.innerText);
-      }
-      this.setAttribute("role", "node");
-      this.setAttribute("tabindex", "0");
-      super.connectedCallback();
-    }
-    #handlePropertyClick;
-    #handleFocusIn;
-    #handleFocusOut;
-    #handleKeyDown(event) {
-      if (!["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) {
-        return;
-      }
-      const nodes = [...this.nodeElements];
-      const isLtr = this.matches(":dir(ltr)");
-      const isRtl = this.matches(":dir(rtl)");
-      if (nodes.length > 0) {
-        event.preventDefault();
-        const activeItemIndex = nodes.findIndex((item) => item.matches(":focus"));
-        const activeItem = nodes[activeItemIndex];
-        const isExpanded = this.state.expanded[activeItem.dataset.path];
-        const isLeaf = isPrimitive(getValueByPath(this.data, activeItem.dataset.path));
-        const focusItemAt = (index) => {
-          const item = nodes[Math.max(Math.min(index, nodes.length - 1), 0)];
-          this.#focusItem(item);
-        };
-        const toggleExpand = (expanded) => {
-          this.setState(toggleNode(activeItem.dataset.path, expanded));
-        };
-        if (event.key === "ArrowDown") {
-          focusItemAt(activeItemIndex + 1);
-        } else if (event.key === "ArrowUp") {
-          focusItemAt(activeItemIndex - 1);
-        } else if (isLtr && event.key === "ArrowRight" || isRtl && event.key === "ArrowLeft") {
-          if (!activeItem || isExpanded || isLeaf) {
-            focusItemAt(activeItemIndex + 1);
-          } else {
-            toggleExpand(true);
-          }
-        } else if (isLtr && event.key === "ArrowLeft" || isRtl && event.key === "ArrowRight") {
-          if (!activeItem || !isExpanded || isLeaf) {
-            focusItemAt(activeItemIndex - 1);
-          } else {
-            toggleExpand(false);
-          }
-        } else if (event.key === "Home") {
-          focusItemAt(0);
-        } else if (event.key === "End") {
-          focusItemAt(nodes.length - 1);
-        }
-      }
-    }
-    #focusItem(item) {
-      item.focus();
-    }
-    expand(glob) {
-      this.setState(expand(glob, true));
-    }
-    expandAll() {
-      this.setState(expand("**", true));
-    }
-    collapseAll() {
-      this.setState(expand("**", false));
-    }
-    collapse(glob) {
-      this.setState(expand(glob, false));
-    }
-    *search(criteria) {
-      for (const [node, path] of deepTraverse(this.data)) {
-        if (isPrimitive(node) && String(node).match(criteria)) {
-          this.expand(path);
-          this.updateComplete.then(() => {
-            const node2 = this.shadowRoot.querySelector(`[data-path="${path}"]`);
-            node2.scrollIntoView({
-              behavior: "smooth",
-              inline: "center",
-              block: "center"
-            });
-            node2.focus();
-          });
-          this.setState(highlight(path));
-          yield {
-            value: node,
-            path
-          };
-        }
-      }
-      this.setState(highlight(null));
-    }
-    filter(criteria) {
-      this.setState(filter(criteria));
-    }
-    resetFilter() {
-      this.setState(resetFilter());
-    }
-    renderObject(node, path) {
-      return ke`
-            <ul part="object" role="group">
-                ${oo(Object.entries(node), ([key, nodeData]) => {
-      const nodePath = path ? `${path}.${key}` : key;
-      const isPrimitiveNode = isPrimitive(nodeData);
-      const isExpanded = this.state.expanded[nodePath];
-      const isFiltered = this.state.filtered[nodePath];
-      return isFiltered ? D : ke`
-                              <li
-                                  part="property"
-                                  role="treeitem"
-                                  data-path="${nodePath}"
-                                  aria-expanded="${isExpanded ? "true" : "false"}"
-                                  tabindex="-1"
-                                  .hidden="${this.state.filtered[nodePath]}"
-                                  aria-hidden="${this.state.filtered[nodePath]}"
-                              >
-                                  <span
-                                      part="key"
-                                      class="${Rt({
-        key,
-        collapsable: !isPrimitiveNode,
-        ["collapsable--collapsed"]: !this.state.expanded[nodePath]
-      })}"
-                                      @click="${!isPrimitiveNode ? this.#handlePropertyClick(nodePath) : null}"
-                                  >
-                                      ${key}:
-                                      ${nn(!isPrimitiveNode && !isExpanded, () => this.renderNodePreview(nodeData))}
-                                  </span>
-
-                                  ${nn(isPrimitiveNode || isExpanded, () => this.renderValue(nodeData, nodePath))}
-                              </li>
-                          `;
-    })}
-            </ul>
-        `;
-    }
-    renderValue(value, path = "") {
-      if (isPrimitive(value)) {
-        return this.renderPrimitive(value, path);
-      }
-      return this.renderObject(value, path);
-    }
-    renderNodePreview(node) {
-      return ke`<span part="preview" class="preview"> ${generateNodePreview(node)} </span>`;
-    }
-    renderPrimitive(node, path) {
-      const highlight2 = this.state.highlight;
-      const nodeType = getType(node);
-      const renderedValue = this.constructor.customRenderer(node, path);
-      const primitiveNode = ke`
-            <span part="primitive primitive-${nodeType}" class="${getType(node)}"> ${renderedValue} </span>
-        `;
-      return path === highlight2 ? ke`<mark part="highlight">${primitiveNode}</mark>` : primitiveNode;
-    }
-    render() {
-      const data = this.data;
-      return ke`
-            <div
-                part="base"
-                @keydown=${this.#handleKeyDown}
-                @focusin="${this.#handleFocusIn}"
-                @focusout="${this.#handleFocusOut}"
-            >
-                ${nn(isDefined(data), () => this.renderValue(data))}
-            </div>
-        `;
-    }
-  };
-  __decorateClass([
-    n4({ converter: JSONConverter, type: Object })
-  ], JsonViewer.prototype, "data");
-  __decorateClass([
-    r4()
-  ], JsonViewer.prototype, "state");
-  __decorateClass([
-    r4()
-  ], JsonViewer.prototype, "lastFocusedItem");
-  __decorateClass([
-    r5('[role="treeitem"]')
-  ], JsonViewer.prototype, "nodeElements");
-
-  // src/index.ts
-  customElements.define("json-viewer", JsonViewer);
-  /*! Bundled license information:
-
-  @lit/reactive-element/css-tag.js:
-    (**
-     * @license
-     * Copyright 2019 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/reactive-element.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  lit-html/lit-html.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  lit-element/lit-element.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  lit-html/is-server.js:
-    (**
-     * @license
-     * Copyright 2022 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/decorators/custom-element.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/decorators/property.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/decorators/state.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/decorators/event-options.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/decorators/base.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/decorators/query.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/decorators/query-all.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/decorators/query-async.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/decorators/query-assigned-elements.js:
-    (**
-     * @license
-     * Copyright 2021 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  @lit/reactive-element/decorators/query-assigned-nodes.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  lit-html/directive.js:
-    (**
-     * @license
-     * Copyright 2017 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  lit-html/directives/class-map.js:
-    (**
-     * @license
-     * Copyright 2018 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  lit-html/directives/map.js:
-    (**
-     * @license
-     * Copyright 2021 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-
-  lit-html/directives/when.js:
-    (**
-     * @license
-     * Copyright 2021 Google LLC
-     * SPDX-License-Identifier: BSD-3-Clause
-     *)
-  */
-
-})();
-//# sourceMappingURL=json-viewer.bundle.js.map
-//# sourceMappingURL=json-viewer.bundle.js.map
 </script>
 <script>
 const $ = s => document.querySelector(s);
@@ -4284,7 +3013,6 @@ function renderDetail(e) {
   );
 
   d.innerHTML = html;
-  applyPendingJsonMounts();
   bindSections(d);
   restoreSectionStates();
   initStickyHeaders(d);
@@ -4778,57 +3506,125 @@ function initStickyHeaders(container) {
   update();
 }
 
-/* ─── Full JSON tree — bundled @alenaksu/json-viewer web component ─── */
-// We render a `<json-viewer>` placeholder and assign the data after the
-// surrounding HTML is mounted (the component upgrades as soon as the
-// bundle is loaded; setting `.data` programmatically avoids stringifying
-// the trace record into an HTML attribute, which would double the DOM
-// size for large bodies).
+/* ─── Full JSON tree (custom renderer) ─── */
 //
-// The toolbar (in the section header) calls expandAll() / collapseAll()
-// on the component directly. We don't need a separate "wrap" toggle —
-// json-viewer already wraps long string values gracefully. We also start
-// with the top two levels expanded to match the previous behaviour.
+// Each object/array is a <details>; closing brace lives on its own line at
+// the parent indent so blocks read top-down like real formatted JSON.
 //
-// _pendingJsonMounts collects (hostId, data) pairs from each
-// renderJsonHost call so renderDetail can apply them in one pass after
-// d.innerHTML is set. Cleared at the start of every detail render.
-const _pendingJsonMounts = [];
+//   ▶  { method: "POST", path: "/v1/...", 5 more }     (collapsed → preview)
+//
+//   ▼  {                                                (expanded ↓)
+//       method: "POST",
+//       path:   "/v1/responses",
+//       …
+//   }                                                   (close brace, own line)
+//
+// Top two levels open by default. The wrap toggle in the toolbar flips
+// data-wrap on the host between "off" (each line is single-line, host
+// scrolls horizontally) and "on" (long string values flow onto next
+// line). All colours come from CSS custom properties on .json-host so
+// the dark theme can override with a single block.
+const JV_PREVIEW_KEYS = 3;
+const JV_PREVIEW_STR  = 40;
 
-function renderJsonHost(value, hostId) {
-  _pendingJsonMounts.push({ hostId, data: value });
-  return `<div class="json-host" id="${hostId}"><json-viewer></json-viewer></div>`;
+function _jvPreviewVal(v) {
+  if (v === null) return '<span class="jnull">null</span>';
+  if (typeof v === 'boolean') return `<span class="jb">${v}</span>`;
+  if (typeof v === 'number')  return `<span class="jn">${v}</span>`;
+  if (typeof v === 'string') {
+    let s = JSON.stringify(v);
+    if (s.length > JV_PREVIEW_STR) s = s.slice(0, JV_PREVIEW_STR - 1) + '…"';
+    return `<span class="js">${esc(s)}</span>`;
+  }
+  if (Array.isArray(v)) return `<span class="jp">[…${v.length}]</span>`;
+  if (typeof v === 'object') {
+    const keys = Object.keys(v);
+    return `<span class="jp">{…${keys.length}}</span>`;
+  }
+  return '';
 }
 
-function applyPendingJsonMounts() {
-  while (_pendingJsonMounts.length) {
-    const { hostId, data } = _pendingJsonMounts.shift();
-    const el = document.querySelector('#' + CSS.escape(hostId) + ' json-viewer');
-    if (!el) continue;
-    el.data = data;
-    // Match the previous "top two levels open" default. expand() takes a
-    // glob path; '*' is depth 1, '*.*' is depth 2.
-    customElements.whenDefined('json-viewer').then(() => {
-      try { el.expand && el.expand('*'); el.expand && el.expand('*.*'); } catch {}
-    });
+function _jvPreview(value) {
+  if (Array.isArray(value)) {
+    if (!value.length) return '';
+    const parts = value.slice(0, JV_PREVIEW_KEYS).map(_jvPreviewVal);
+    if (value.length > JV_PREVIEW_KEYS) parts.push(`<span class="jpreview">…${value.length - JV_PREVIEW_KEYS} more</span>`);
+    return parts.join('<span class="jp">, </span>');
   }
+  const keys = Object.keys(value);
+  if (!keys.length) return '';
+  const parts = keys.slice(0, JV_PREVIEW_KEYS).map(k =>
+    `<span class="jk">${esc(JSON.stringify(k))}</span><span class="jp">: </span>${_jvPreviewVal(value[k])}`
+  );
+  if (keys.length > JV_PREVIEW_KEYS) parts.push(`<span class="jpreview">…${keys.length - JV_PREVIEW_KEYS} more</span>`);
+  return parts.join('<span class="jp">, </span>');
+}
+
+function renderJsonValue(value, depth) {
+  if (value === null) return '<span class="jnull">null</span>';
+  if (typeof value === 'boolean') return `<span class="jb">${value}</span>`;
+  if (typeof value === 'number')  return `<span class="jn">${value}</span>`;
+  if (typeof value === 'string')  return `<span class="js">${esc(JSON.stringify(value))}</span>`;
+  const isArr = Array.isArray(value);
+  const open  = isArr ? '[' : '{';
+  const close = isArr ? ']' : '}';
+  const empty = isArr ? !value.length : !Object.keys(value).length;
+  if (empty) return `<span class="jp">${open}${close}</span>`;
+  const isOpen = depth < 2 ? ' open' : '';
+  const childrenHtml = isArr
+    ? value.map((v, i) => {
+        const sep = i < value.length - 1 ? '<span class="jp">,</span>' : '';
+        return `<div class="jline">${renderJsonValue(v, depth + 1)}${sep}</div>`;
+      }).join('')
+    : Object.keys(value).map((k, i, arr) => {
+        const sep = i < arr.length - 1 ? '<span class="jp">,</span>' : '';
+        return `<div class="jline"><span class="jk">${esc(JSON.stringify(k))}</span><span class="jp">: </span>${renderJsonValue(value[k], depth + 1)}${sep}</div>`;
+      }).join('');
+  const previewHtml = _jvPreview(value);
+  return (
+    `<details class="jdet"${isOpen}>` +
+      `<summary class="jline">` +
+        `<span class="jchev">▶</span>` +
+        `<span class="jp">${open}</span>` +
+        `<span class="jpreview"> ${previewHtml} </span>` +
+        `<span class="jp jb-collapsed-close">${close}</span>` +
+      `</summary>` +
+      `<div class="jchildren">${childrenHtml}</div>` +
+      `<div class="jline jclose"><span class="jp">${close}</span></div>` +
+    `</details>`
+  );
+}
+
+function renderJsonHost(value, hostId) {
+  return `<div class="json-host" id="${hostId}" data-wrap="off"><div class="jline">${renderJsonValue(value, 0)}</div></div>`;
 }
 
 function renderJsonControls(hostId) {
   return (
     `<div class="json-controls" onclick="event.stopPropagation()">` +
-      `<button class="json-btn" onclick="jsonHostExpandAll('${hostId}')" title="${t('json_expand_all')}"><span class="ji-ico">⊞</span></button>` +
-      `<button class="json-btn" onclick="jsonHostCollapseAll('${hostId}')" title="${t('json_collapse_all')}"><span class="ji-ico">⊟</span></button>` +
+      `<button class="json-btn" onclick="jsonExpandAll('${hostId}')" title="${t('json_expand_all')}"><span class="ji-ico">⊞</span></button>` +
+      `<button class="json-btn" onclick="jsonCollapseAll('${hostId}')" title="${t('json_collapse_all')}"><span class="ji-ico">⊟</span></button>` +
+      `<button class="json-btn" data-jw onclick="jsonToggleWrap('${hostId}', this)" title="${t('json_wrap')}"><span class="ji-ico">↩</span></button>` +
     `</div>`
   );
 }
 
-function _jsonViewerEl(hostId) {
+function jsonExpandAll(hostId) {
   const host = document.getElementById(hostId);
-  return host ? host.querySelector('json-viewer') : null;
+  if (host) host.querySelectorAll('details.jdet').forEach(d => { d.open = true; });
 }
-function jsonHostExpandAll(hostId)  { const el = _jsonViewerEl(hostId); if (el?.expandAll) el.expandAll(); }
-function jsonHostCollapseAll(hostId){ const el = _jsonViewerEl(hostId); if (el?.collapseAll) el.collapseAll(); }
+function jsonCollapseAll(hostId) {
+  const host = document.getElementById(hostId);
+  if (host) host.querySelectorAll('details.jdet').forEach(d => { d.open = false; });
+}
+function jsonToggleWrap(hostId, btn) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  const wrapping = host.dataset.wrap === 'on';
+  host.dataset.wrap = wrapping ? 'off' : 'on';
+  btn.title = wrapping ? t('json_wrap') : t('json_unwrap');
+  btn.classList.toggle('active', !wrapping);
+}
 
 function copyRequestBody(btn) {
   let e = filtered[activeIdx]; if (!e) return;
