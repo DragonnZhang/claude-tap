@@ -2504,15 +2504,26 @@ const taskFingerprintCache = new Map();
 // (cite the trace file you pulled the phrase from).
 const TASK_LABEL_RULES = [
   // Specific sub-tasks first, so they win over the main-agent rule below.
-  ['generate a concise, sentence-case title',  'Title gen'],   // Claude Code's session-title sub-call
-  ['summarize the conversation so far',        'Summary'],     // Claude Code session summary
+  ['generate a concise, sentence-case title',     'Title gen'],   // Claude Code's session-title sub-call
+  ['summarize the conversation so far',           'Summary'],     // Claude Code session summary
+  ['context summarization assistant',             'Compact'],     // pi compaction sub-call
 
-  // Main agents — anchored on a phrase from the very first sentence.
-  ["anthropic's claude agent sdk",             'Claude Code'], // "You are a Claude agent, built on Anthropic's Claude Agent SDK."
-  ['cc_version=',                              'Claude Code'], // billing header — always present from Claude Code
-  ['you are codex',                            'Codex'],       // "You are Codex, a coding agent based on GPT-5."
-  ['non-interactive cli agent',                'Gemini CLI'],  // "You are a non-interactive CLI agent specializing in..."
-  ['openclaw',                                 'OpenClaw'],
+  // Main agents — anchored on a phrase verified against each CLI's real
+  // system prompt (live trace or bundled source). iFlow's main prompt was
+  // forked from Gemini's wording, so its rule must come BEFORE the Gemini
+  // one ("interactive cli agent" vs "non-interactive cli agent").
+  ["anthropic's claude agent sdk",                'Claude Code'], // "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+  ['cc_version=',                                 'Claude Code'], // x-anthropic-billing-header — only Claude Code emits it
+  ['you are codex',                               'Codex'],       // "You are Codex, a coding agent based on GPT-5."
+  ['you are iflow cli',                           'iFlow CLI'],   // "You are iFlow CLI, an interactive CLI agent..."
+  ['non-interactive cli agent',                   'Gemini CLI'],  // "You are a non-interactive CLI agent specializing in..."
+  ['you are opencode',                            'opencode'],    // "You are opencode, an agent - please keep going..."
+  ['running inside openclaw',                     'OpenClaw'],    // "You are a personal assistant running inside OpenClaw."
+  ['expert coding assistant operating inside pi', 'Pi'],          // "You are an expert coding assistant operating inside pi, a coding agent harness."
+  ['you are kimi code cli',                       'Kimi'],        // "You are Kimi Code CLI, an interactive general AI agent..."
+  ['you are hermes agent',                        'Hermes'],      // "You are Hermes Agent, an intelligent AI assistant created by Nous Research."
+  ['you are devin',                               'Devin'],       // "You are Devin, a powerful agentic AI coding assistant created by Cognition."
+  ['for qoder, an ai coding assistant',           'Qoder'],       // "You are an agent for Qoder, an AI coding assistant."
 ];
 
 function getTaskFingerprint(e) {
@@ -2522,10 +2533,33 @@ function getTaskFingerprint(e) {
   if (!body) { taskFingerprintCache.set(rid, null); return null; }
 
   // Pull the system prompt out of whichever shape the upstream uses.
+  // Anthropic: body.system (string or text-block array)
+  // OpenAI Responses: body.instructions OR body.input[]/role:system (opencode)
+  // OpenAI Chat Completions: body.messages[]/role:system (iflow, kimi, …)
+  // Google Gemini: body.systemInstruction.parts[*].text
   let sysText = '';
   if (typeof body.system === 'string') sysText = body.system;
   else if (Array.isArray(body.system)) sysText = body.system.map(s => typeof s === 'string' ? s : (s.text || '')).join('\n');
   else if (typeof body.instructions === 'string') sysText = body.instructions;
+  else if (body.systemInstruction && Array.isArray(body.systemInstruction.parts)) {
+    sysText = body.systemInstruction.parts.map(p => p?.text || '').join('\n');
+  } else {
+    for (const key of ['input', 'messages']) {
+      const arr = body[key];
+      if (!Array.isArray(arr)) continue;
+      for (const m of arr) {
+        if (m && typeof m === 'object' && m.role === 'system') {
+          const c = m.content;
+          if (typeof c === 'string') { sysText = c; break; }
+          if (Array.isArray(c)) {
+            sysText = c.map(b => (typeof b === 'string' ? b : (b?.text || ''))).join('\n');
+            break;
+          }
+        }
+      }
+      if (sysText) break;
+    }
+  }
 
   // Stable fingerprint: full system + sorted tool names.
   const tools = body.tools || [];
