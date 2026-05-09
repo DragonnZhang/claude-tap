@@ -3194,18 +3194,21 @@ function renderSystemPromptBody(text, hostId) {
 function renderSystemPromptControls(hostId) {
   return (
     `<div class="md-toggle" onclick="event.stopPropagation()">` +
-      `<button class="md-tab active" onclick="setMdMode('${hostId}','raw')">${t('view_raw')}</button>` +
-      `<button class="md-tab" onclick="setMdMode('${hostId}','md')">${t('view_md')}</button>` +
+      `<button class="md-tab active" data-md-host="${hostId}" data-md-mode="raw" onclick="setMdMode('${hostId}','raw')">${t('view_raw')}</button>` +
+      `<button class="md-tab" data-md-host="${hostId}" data-md-mode="md" onclick="setMdMode('${hostId}','md')">${t('view_md')}</button>` +
     `</div>`
   );
 }
 
+// The .md-host (body) and the .md-tab buttons (section header) live in
+// different DOM subtrees, so we look the tabs up by data-md-host attr
+// rather than walking down from the host. Matching by dataset.mdMode also
+// avoids the brittle textContent comparison that broke with translations.
 function setMdMode(hostId, mode) {
   const host = document.getElementById(hostId);
-  if (!host) return;
-  host.dataset.mode = mode;
-  host.querySelectorAll('.md-tab').forEach(b => {
-    b.classList.toggle('active', b.textContent === (mode === 'raw' ? t('view_raw') : t('view_md')));
+  if (host) host.dataset.mode = mode;
+  document.querySelectorAll(`.md-tab[data-md-host="${hostId}"]`).forEach(b => {
+    b.classList.toggle('active', b.dataset.mdMode === mode);
   });
 }
 
