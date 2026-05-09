@@ -320,12 +320,22 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .section-header {
   display: flex; align-items: center; padding: 8px 12px;
   cursor: pointer; user-select: none; gap: 8px;
-  transition: background .1s;
+  transition: background .1s, box-shadow .15s, border-radius .15s;
   position: sticky; top: 0; z-index: 3;
   background: var(--bg-card);
   border-radius: var(--radius) var(--radius) 0 0;
 }
 .section-header:hover { background: var(--bg-hover); }
+/* When the header is stuck to the top of the scroll container, drop the
+   top rounded corners and add a subtle drop-shadow / divider so the
+   floating bar reads as "anchored" rather than disconnected from the
+   content scrolling beneath. The .stuck class is toggled by an
+   IntersectionObserver in initStickyHeaders. */
+.section-header.stuck {
+  border-radius: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+  border-bottom: 1px solid var(--border);
+}
 .section-header .chevron {
   font-size: 10px; color: var(--text-tertiary); transition: transform .2s; width: 12px;
 }
@@ -507,15 +517,23 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 
 /* ─── JSON viewer (collapsible tree + wrap toggle) ─── */
 .json-host { position: relative; }
-.json-toolbar {
-  display: flex; gap: 6px; margin-bottom: 6px;
+/* Compact icon-led control group lives in the .section-header (right side),
+   matching the .md-toggle pattern — no extra row above the JSON view. */
+.json-controls {
+  display: inline-flex; gap: 2px; padding: 2px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); font-size: 11px; margin-left: auto;
 }
-.json-btn {
-  font-size: 11px; padding: 3px 10px; border-radius: 4px;
-  border: 1px solid var(--border); background: var(--bg);
-  color: var(--text-secondary); cursor: pointer; font-family: var(--sans);
+.json-controls .json-btn {
+  border: 0; background: transparent; cursor: pointer;
+  padding: 3px 8px; border-radius: 4px;
+  color: var(--text-tertiary); font-family: var(--sans); font-size: 11px;
+  display: inline-flex; align-items: center; gap: 4px;
+  line-height: 1; transition: color .12s, background .12s;
 }
-.json-btn:hover { color: var(--blue); border-color: var(--blue); }
+.json-controls .json-btn:hover { color: var(--blue); background: var(--bg-card); }
+.json-controls .json-btn.active { color: var(--text); background: var(--bg-card); font-weight: 600; }
+.json-controls .ji-ico { font-size: 13px; line-height: 1; }
 .json-view {
   font-family: var(--mono); font-size: 12px;
   max-height: 600px; overflow: auto; line-height: 1.55;
@@ -2956,11 +2974,20 @@ function renderDetail(e) {
   const streamEvents = getResponseEvents(e);
   if (streamEvents.length) html += section(t('section_sse'), renderSSEEvents(streamEvents), false, null, streamEvents.length + ' ' + t('badge_events'));
 
-  html += section(t('section_json'), renderJsonHost(e), false, JSON.stringify(e, null, 2));
+  const jsonHostId = 'jh-' + Math.random().toString(36).slice(2, 9);
+  html += section(
+    t('section_json'),
+    renderJsonHost(e, jsonHostId),
+    false,
+    JSON.stringify(e, null, 2),
+    null,
+    renderJsonControls(jsonHostId)
+  );
 
   d.innerHTML = html;
   bindSections(d);
   restoreSectionStates();
+  initStickyHeaders(d);
   if (globalSearchState.open && globalSearchState.query) {
     const target = getTargetForGlobalMatch(globalSearchState.currentMatch);
     const localIndex = target && target.requestId === e.request_id ? target.localIndex : 0;
@@ -3414,29 +3441,70 @@ function bindSections(container) {
   });
 }
 
+// Toggle a ``.stuck`` class on whichever section header is currently
+// pinned to the top of the .detail scroll container, on each scroll. With
+// only a handful of sections per turn, the per-frame cost of measuring
+// each header's bounding rect is negligible — a scroll listener is far
+// simpler than the IntersectionObserver-with-two-sentinels dance and
+// stays exact (only the truly-pinned header gets the class, never the
+// ones whose section has already scrolled past).
+let _stickyScrollHandler = null;
+function initStickyHeaders(container) {
+  const detail = document.getElementById('detail');
+  if (!detail) return;
+  if (_stickyScrollHandler) {
+    detail.removeEventListener('scroll', _stickyScrollHandler);
+  }
+  let pending = false;
+  const update = () => {
+    pending = false;
+    const rb = detail.getBoundingClientRect();
+    const padTop = parseFloat(getComputedStyle(detail).paddingTop) || 0;
+    const stickyTop = rb.top + padTop;
+    container.querySelectorAll('.section-header').forEach(h => {
+      const r = h.getBoundingClientRect();
+      h.classList.toggle('stuck', Math.abs(r.top - stickyTop) < 4);
+    });
+  };
+  _stickyScrollHandler = () => {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(update);
+  };
+  detail.addEventListener('scroll', _stickyScrollHandler, { passive: true });
+  update();
+}
+
 /* ─── Full JSON tree (collapsible objects/arrays + wrap toggle) ─── */
-function renderJsonHost(value) {
+// renderJsonHost is the body content; renderJsonControls is the matching
+// toolbar that lives in the section header (right-aligned). They're paired
+// by ``hostId`` so the toolbar can target the host element.
+function renderJsonHost(value, hostId) {
+  return `<div class="json-host" data-wrap="off" id="${hostId}"><div class="json-view">${renderJsonTree(value, 0)}</div></div>`;
+}
+
+function renderJsonControls(hostId) {
   return (
-    `<div class="json-host" data-wrap="off">` +
-      `<div class="json-toolbar">` +
-        `<button class="json-btn" onclick="setJsonExpansion(this, true)" title="${t('json_expand_all')}">${t('json_expand_all')}</button>` +
-        `<button class="json-btn" onclick="setJsonExpansion(this, false)" title="${t('json_collapse_all')}">${t('json_collapse_all')}</button>` +
-        `<button class="json-btn" onclick="toggleJsonWrap(this)">${t('json_wrap')}</button>` +
-      `</div>` +
-      `<div class="json-view">${renderJsonTree(value, 0)}</div>` +
+    `<div class="json-controls" onclick="event.stopPropagation()">` +
+      `<button class="json-btn" onclick="setJsonExpansionById('${hostId}', true)" title="${t('json_expand_all')}"><span class="ji-ico">⊞</span></button>` +
+      `<button class="json-btn" onclick="setJsonExpansionById('${hostId}', false)" title="${t('json_collapse_all')}"><span class="ji-ico">⊟</span></button>` +
+      `<button class="json-btn" data-jw onclick="toggleJsonWrapById('${hostId}', this)" title="${t('json_wrap')}"><span class="ji-ico">↩</span></button>` +
     `</div>`
   );
 }
 
-function toggleJsonWrap(btn) {
-  const host = btn.closest('.json-host');
+function toggleJsonWrapById(hostId, btn) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
   const wrapping = host.dataset.wrap === 'on';
   host.dataset.wrap = wrapping ? 'off' : 'on';
-  btn.textContent = wrapping ? t('json_wrap') : t('json_unwrap');
+  btn.title = wrapping ? t('json_wrap') : t('json_unwrap');
+  btn.classList.toggle('active', !wrapping);
 }
 
-function setJsonExpansion(btn, open) {
-  const host = btn.closest('.json-host');
+function setJsonExpansionById(hostId, open) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
   host.querySelectorAll('details.jdet').forEach(d => { d.open = open; });
 }
 
