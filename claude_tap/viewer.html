@@ -3035,11 +3035,31 @@ function extractSystem(body) {
   // Anthropic: body.system (string or text-block array)
   if (typeof body.system === 'string') return body.system;
   if (Array.isArray(body.system)) return body.system.map(b => typeof b === 'string' ? b : b.type === 'text' ? (b.text || '') : JSON.stringify(b)).join('\n\n');
-  // OpenAI Responses: body.instructions
+  // OpenAI Responses: body.instructions (codex) OR a system-role item in
+  // body.input[] (opencode). We have to scan input[] explicitly because
+  // some clients put their full system prompt there instead of using the
+  // top-level instructions field.
   if (typeof body.instructions === 'string') return body.instructions;
   // Gemini: body.systemInstruction is { parts: [ { text } ] } (single-message form).
   if (body.systemInstruction && Array.isArray(body.systemInstruction.parts)) {
     return body.systemInstruction.parts.map(p => p?.text || '').filter(Boolean).join('\n\n') || null;
+  }
+  // Fallback: scan body.input[] (OpenAI Responses) and body.messages[]
+  // (OpenAI Chat Completions, used by iflow/kimi) for a role:"system"
+  // item. Picks the first matching item — that's the canonical system
+  // prompt for these schemas.
+  for (const key of ['input', 'messages']) {
+    const arr = body[key];
+    if (!Array.isArray(arr)) continue;
+    for (const m of arr) {
+      if (m && typeof m === 'object' && m.role === 'system') {
+        const c = m.content;
+        if (typeof c === 'string') return c;
+        if (Array.isArray(c)) {
+          return c.map(b => typeof b === 'string' ? b : (b?.text || '')).filter(Boolean).join('\n');
+        }
+      }
+    }
   }
   return null;
 }
@@ -3074,13 +3094,19 @@ function getEventData(event) {
 // renderContent understands.
 function getMessages(body) {
   if (!body) return [];
-  if (Array.isArray(body.messages) && body.messages.length > 0) return body.messages;
+  // Filter out role:'system' items — those are surfaced in the
+  // dedicated System Prompt section by extractSystem(), so leaving
+  // them in here would render the prompt twice.
+  if (Array.isArray(body.messages) && body.messages.length > 0) {
+    return body.messages.filter(m => !m || m.role !== 'system');
+  }
   if (Array.isArray(body.contents)) return body.contents.map(geminiContentToMessage).filter(Boolean);
   if (!Array.isArray(body.input)) return [];
 
   const out = [];
   for (const item of body.input) {
     if (!item || typeof item !== 'object') continue;
+    if (item.role === 'system') continue;  // surfaced by extractSystem
     const t = item.type;
 
     if (t === 'function_call') {
