@@ -12,6 +12,7 @@ Python builds (notably macOS Python 3.11).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -23,6 +24,7 @@ from claude_tap.pipeline import (
     HOP_BY_HOP,
     ProxyContext,
     build_http_record,
+    capture_only_response,
     filter_headers,
     maybe_decompress,
     parse_json_body,
@@ -235,6 +237,32 @@ class ForwardProxyServer:
         streaming = protocol.is_streaming(path, req_body)
         model = req_body.get("model", "") if isinstance(req_body, dict) else ""
         log.info("[Turn %d] -> %s %s (%s) model=%s stream=%s", turn, method, path, protocol.name, model, streaming)
+
+        if ctx.capture_only:
+            resp_body = capture_only_response(protocol, path, req_body)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            record = build_http_record(
+                request_id=request_id,
+                turn=turn,
+                duration_ms=duration_ms,
+                method=method,
+                path=path,
+                req_headers=headers,
+                req_body=req_body,
+                status=200,
+                resp_headers={"Content-Type": "application/json"},
+                resp_body=resp_body,
+                upstream_base_url=upstream_base,
+            )
+            await ctx.bus.publish(record)
+            body_bytes = json.dumps(resp_body, separators=(",", ":")).encode()
+            client_writer.write(b"HTTP/1.1 200 OK\r\n")
+            client_writer.write(b"Content-Type: application/json\r\n")
+            client_writer.write(f"Content-Length: {len(body_bytes)}\r\n\r\n".encode())
+            client_writer.write(body_bytes)
+            await client_writer.drain()
+            log.info("[Turn %d] capture-only response returned; upstream skipped", turn)
+            return
 
         fwd = filter_headers(headers)
         fwd.pop("Host", None)

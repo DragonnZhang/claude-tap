@@ -215,6 +215,49 @@ async def test_forward_proxy_blocks_unknown_path(trace_dir: Path):
     assert jsonl_path.read_text(encoding="utf-8").strip() == ""
 
 
+async def test_forward_proxy_capture_only_records_without_upstream(trace_dir: Path):
+    cert_path, key_path = ensure_ca()
+    ca = CertificateAuthority(cert_path, key_path)
+
+    class FailingSession:
+        async def request(self, *args, **kwargs):
+            raise AssertionError("capture-only must not call upstream")
+
+    bus = EventBus()
+    jsonl_path = trace_dir / "trace.jsonl"
+    bus.subscribe(JsonlSink(jsonl_path))
+    ctx = ProxyContext(
+        protocols=(ANTHROPIC,),
+        target="https://api.anthropic.com",
+        bus=bus,
+        session=FailingSession(),  # type: ignore[arg-type]
+        capture_only=True,
+    )
+    proxy, proxy_port = await _start_proxy(ctx, ca)
+
+    try:
+        client_ssl = ssl.create_default_context(cafile=str(cert_path))
+        client_connector = aiohttp.TCPConnector(ssl=client_ssl)
+        async with aiohttp.ClientSession(connector=client_connector) as client:
+            async with client.post(
+                "https://api.anthropic.com/v1/messages",
+                json={"model": "claude-test", "system": "system text", "messages": []},
+                proxy=f"http://127.0.0.1:{proxy_port}",
+            ) as resp:
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["id"] == "msg_claude_tap_capture"
+    finally:
+        await proxy.stop()
+        await bus.close_all()
+
+    lines = jsonl_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["request"]["body"]["system"] == "system text"
+    assert record["response"]["body"]["id"] == "msg_claude_tap_capture"
+
+
 async def test_forward_proxy_streams_and_reassembles(trace_dir: Path):
     """SSE responses are forwarded chunk-by-chunk *and* reassembled into a
     snapshot recorded into the trace."""

@@ -45,6 +45,7 @@ class ProxyContext:
     target: str
     bus: EventBus
     session: aiohttp.ClientSession
+    capture_only: bool = False
     turn_counter: int = field(default=0)
 
     def next_turn(self) -> int:
@@ -93,6 +94,57 @@ def maybe_decompress(body: bytes, content_encoding: str) -> bytes:
     except Exception:
         return body
     return body
+
+
+def capture_only_response(protocol: Protocol, path: str, req_body: object) -> dict:
+    model = req_body.get("model", "claude-tap-capture") if isinstance(req_body, dict) else "claude-tap-capture"
+    if protocol.name == "anthropic":
+        return {
+            "id": "msg_claude_tap_capture",
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": [{"type": "text", "text": "captured"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        }
+    if protocol.name == "gemini":
+        return {
+            "candidates": [
+                {
+                    "content": {"role": "model", "parts": [{"text": "captured"}]},
+                    "finishReason": "STOP",
+                    "index": 0,
+                }
+            ],
+            "usageMetadata": {"promptTokenCount": 0, "candidatesTokenCount": 0, "totalTokenCount": 0},
+        }
+    if protocol.name == "openai" and "chat/completions" in path:
+        return {
+            "id": "chatcmpl_claude_tap_capture",
+            "object": "chat.completion",
+            "created": 0,
+            "model": model,
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "captured"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+    return {
+        "id": "resp_claude_tap_capture",
+        "object": "response",
+        "created_at": 0,
+        "status": "completed",
+        "model": model,
+        "output": [
+            {
+                "type": "message",
+                "id": "msg_claude_tap_capture",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "captured"}],
+            }
+        ],
+        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+    }
 
 
 def build_http_record(

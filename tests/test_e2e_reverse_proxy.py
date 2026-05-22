@@ -109,6 +109,50 @@ async def test_reverse_proxy_records_buffered_request(trace_dir: Path):
     assert summary["output_tokens"] == 2
 
 
+async def test_reverse_proxy_capture_only_records_without_upstream(trace_dir: Path):
+    async def fail_if_called(_request: web.Request) -> web.Response:
+        raise AssertionError("capture-only must not call upstream")
+
+    upstream = web.Application(client_max_size=0)
+    upstream.router.add_route("POST", "/v1/messages", fail_if_called)
+    upstream_runner, upstream_port = await _start("127.0.0.1", 0, upstream)
+
+    bus = EventBus()
+    jsonl_path = trace_dir / "trace.jsonl"
+    bus.subscribe(JsonlSink(jsonl_path))
+
+    session = aiohttp.ClientSession(auto_decompress=False, trust_env=True)
+    ctx = ProxyContext(
+        protocols=(ANTHROPIC,),
+        target=f"http://127.0.0.1:{upstream_port}",
+        bus=bus,
+        session=session,
+        capture_only=True,
+    )
+    proxy_runner, proxy_port = await _start("127.0.0.1", 0, build_app(ctx))
+
+    try:
+        async with aiohttp.ClientSession() as client:
+            async with client.post(
+                f"http://127.0.0.1:{proxy_port}/v1/messages",
+                json={"model": "claude-test", "system": "system text", "messages": []},
+            ) as resp:
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["id"] == "msg_claude_tap_capture"
+    finally:
+        await session.close()
+        await proxy_runner.cleanup()
+        await upstream_runner.cleanup()
+        await bus.close_all()
+
+    lines = jsonl_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["request"]["body"]["system"] == "system text"
+    assert record["response"]["body"]["id"] == "msg_claude_tap_capture"
+
+
 async def test_reverse_proxy_blocks_unknown_path(trace_dir: Path):
     bus = EventBus()
     sink = JsonlSink(trace_dir / "trace.jsonl")

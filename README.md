@@ -292,6 +292,9 @@ claude-tap claude -- -p "What is 2+2?"
 # Trace once and export the captured system prompt / instructions / tools
 claude-tap run gemini --export-prompt prompt.md --no-live --no-open -- -p "hi"
 
+# --export-prompt is capture-only: it records the request and does not call upstream
+claude-tap openclaw --export-prompt openclaw-prompt.md --no-live --no-open -- agent --local --message hi --json
+
 # Force forward mode (CA install required) for any CLI
 claude-tap claude -m forward
 

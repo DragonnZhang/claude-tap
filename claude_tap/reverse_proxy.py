@@ -24,6 +24,7 @@ from claude_tap.pipeline import (
     HOP_BY_HOP,
     ProxyContext,
     build_upstream_url,
+    capture_only_response,
     filter_headers,
     maybe_decompress,
     parse_json_body,
@@ -104,6 +105,26 @@ async def _handle_http(
         streaming,
         upstream_url,
     )
+
+    if ctx.capture_only:
+        resp_body = capture_only_response(protocol, request.path_qs, req_body)
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        record = _build_http_record(
+            request_id=request_id,
+            turn=turn,
+            duration_ms=duration_ms,
+            method=request.method,
+            path=request.path_qs,
+            req_headers=request.headers,
+            req_body=req_body,
+            status=200,
+            resp_headers={"Content-Type": "application/json"},
+            resp_body=resp_body,
+            upstream_base_url=ctx.target,
+        )
+        await ctx.bus.publish(record)
+        log.info("[Turn %d] capture-only response returned; upstream skipped", turn)
+        return web.json_response(resp_body)
 
     try:
         upstream_resp = await ctx.session.request(

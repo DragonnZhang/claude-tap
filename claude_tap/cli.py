@@ -466,7 +466,10 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
     web_runner: web.AppRunner | None = None
     ca_cert_path: Path | None = None
 
-    ctx = ProxyContext(protocols=protocols, target=target, bus=bus, session=session)
+    capture_only = bool(launch_client and getattr(args, "export_prompt", None))
+    ctx = ProxyContext(protocols=protocols, target=target, bus=bus, session=session, capture_only=capture_only)
+    if capture_only:
+        sys.stdout.write("[claude-tap] capture-only: exporting prompt without calling upstream\n")
 
     if args.mode == "forward":
         cert_path, key_path = ensure_ca()
