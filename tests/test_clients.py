@@ -140,6 +140,36 @@ def test_openclaw_env_redirects_common_backends():
     assert env["OPENROUTER_BASE_URL"] == "http://127.0.0.1:8080/v1"
 
 
+def test_openclaw_env_writes_temp_config_for_active_provider(fake_home: Path):
+    cfg = fake_home / ".openclaw" / "openclaw.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(
+        json.dumps(
+            {
+                "agents": {"defaults": {"model": {"primary": "phistory/phistory-dummy"}}},
+                "models": {
+                    "providers": {
+                        "phistory": {
+                            "baseUrl": "https://relay.example.com/v1",
+                            "api": "openai-responses",
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = clients.get("openclaw").env_overrides("http://127.0.0.1:8080")
+    temp_cfg = Path(env["OPENCLAW_CONFIG_PATH"])
+    try:
+        data = json.loads(temp_cfg.read_text(encoding="utf-8"))
+        assert data["models"]["providers"]["phistory"]["baseUrl"] == "http://127.0.0.1:8080/v1"
+        assert data["agents"]["defaults"]["model"]["primary"] == "phistory/phistory-dummy"
+    finally:
+        temp_cfg.unlink(missing_ok=True)
+
+
 # --- protocols mapping ----------------------------------------------------
 
 
@@ -611,7 +641,7 @@ def test_env_redirect_reliable_matches_client_capability():
     so they default to forward mode instead. Devin is single-backend but its
     rustls binary does not honor our env redirect, so it also defaults to
     forward mode."""
-    for name in ("claude", "codex", "gemini", "cursor", "qoder"):
+    for name in ("claude", "codex", "gemini", "cursor", "qoder", "openclaw"):
         assert clients.get(name).env_redirect_reliable, name
-    for name in ("opencode", "pi", "kimi", "iflow", "hermes", "openclaw", "devin"):
+    for name in ("opencode", "pi", "kimi", "iflow", "hermes", "devin"):
         assert not clients.get(name).env_redirect_reliable, name

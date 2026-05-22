@@ -11,7 +11,7 @@ import signal
 import sys
 from pathlib import Path
 
-from claude_tap.clients import Client
+from claude_tap.clients import LAUNCH_CLEANUP_PATH_ENV, Client
 
 log = logging.getLogger("claude_tap")
 
@@ -105,6 +105,7 @@ async def run_client(
 
     redirect_env: dict[str, str] = {}
     redirect_args: list[str] = []
+    cleanup_path: str | None = None
     if proxy_mode == "forward":
         _install_forward_proxy_env(env, proxy_url, ca_cert_path)
         # Claude Code reads proxy settings from its --settings JSON, not just
@@ -117,6 +118,7 @@ async def run_client(
     else:
         _strip_proxy_env_for_reverse(env)
         redirect_env = client.env_overrides(proxy_url)
+        cleanup_path = redirect_env.pop(LAUNCH_CLEANUP_PATH_ENV, None)
         env.update(redirect_env)
         # Some clients (codex) ignore env-based base-URL overrides and need
         # CLI-level redirect (e.g. ``-c openai_base_url=…``).
@@ -201,6 +203,11 @@ async def run_client(
         pass
 
     code = await proc.wait()
+    if cleanup_path:
+        try:
+            Path(cleanup_path).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     if use_fg:
         old_ttou = signal.signal(signal.SIGTTOU, signal.SIG_IGN)

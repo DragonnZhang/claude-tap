@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
 from claude_tap.cli import _export_prompt_from_trace
-from claude_tap.clients import GEMINI_CLI, OPENCODE
+from claude_tap.clients import GEMINI_CLI, OPENCLAW, OPENCODE
 from claude_tap.runner import run_client
 
 
@@ -128,3 +129,54 @@ def test_export_prompt_from_trace_creates_parent_directory(tmp_path):
     assert "# Prompt Snapshot" not in text
     assert "# System Prompt" in text
     assert "system text" in text
+
+
+@pytest.mark.asyncio
+async def test_openclaw_temp_config_is_removed_after_run(tmp_path, monkeypatch):
+    captured: dict = {}
+    config = tmp_path / "openclaw.json"
+    config.write_text(
+        json.dumps(
+            {
+                "agents": {"defaults": {"model": {"primary": "local/test"}}},
+                "models": {"providers": {"local": {"baseUrl": "https://relay.example.com/v1", "api": "openai-responses"}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeProc:
+        returncode = None
+        pid = 12345
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+        def terminate(self) -> None:
+            self.returncode = 143
+
+        def kill(self) -> None:
+            self.returncode = 137
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        captured["env"] = kwargs["env"]
+        return FakeProc()
+
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(config))
+    monkeypatch.setattr("claude_tap.runner.shutil.which", lambda _cmd: "/usr/bin/openclaw")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    rc = await run_client(
+        client=OPENCLAW,
+        proxy_port=1234,
+        proxy_host="127.0.0.1",
+        forward_args=["agent", "--local", "--message", "hi"],
+        proxy_mode="reverse",
+        yolo=False,
+    )
+
+    assert rc == 0
+    temp_config = Path(captured["env"]["OPENCLAW_CONFIG_PATH"])
+    assert temp_config != config
+    assert not temp_config.exists()

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -26,6 +27,8 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from claude_tap.protocols import ANTHROPIC, GEMINI, OPENAI, PASSTHROUGH, Protocol
+
+LAUNCH_CLEANUP_PATH_ENV = "__CLAUDE_TAP_CLEANUP_PATH__"
 
 
 @dataclass(frozen=True)
@@ -87,7 +90,7 @@ class Client:
 
     # Whether ``env_overrides`` actually redirects this client's outbound
     # HTTPS. For multi-backend clients (opencode / pi / kimi / iflow /
-    # hermes / openclaw) the user's config-file ``baseURL`` overrides any env we set,
+    # hermes) the user's config-file ``baseURL`` overrides any env we set,
     # so env-based reverse mode silently fails. For those, we default to
     # forward mode (HTTPS_PROXY + CA-MITM) which redirects regardless of
     # config. Single-backend clients honor their env vars reliably.
@@ -812,6 +815,22 @@ def _hermes_auth() -> AuthInfo:
 
 
 def _openclaw_env(proxy_url: str) -> dict[str, str]:
+    cfg = _read_json5ish(_openclaw_config_path(os.environ))
+    if cfg:
+        patched = _openclaw_config_with_proxy(cfg, proxy_url)
+        if patched:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".openclaw.json", delete=False) as f:
+                json.dump(patched, f, indent=2)
+                f.write("\n")
+                tmp_path = f.name
+            return {
+                "OPENCLAW_CONFIG_PATH": tmp_path,
+                LAUNCH_CLEANUP_PATH_ENV: tmp_path,
+            }
+
+    # Fallback for brand-new configs or config shapes we cannot safely patch.
+    # If OpenClaw honors provider envs in that setup, this still captures; if
+    # it does not, the actionable error is to run `openclaw onboard`.
     return {
         "OPENAI_BASE_URL": f"{proxy_url}/v1",
         "ANTHROPIC_BASE_URL": proxy_url,
@@ -851,6 +870,37 @@ def _openclaw_primary_model(cfg: Mapping[str, object]) -> str | None:
             if isinstance(key, str):
                 return key
     return None
+
+
+def _openclaw_provider_proxy_url(provider: Mapping[str, object], proxy_url: str) -> str:
+    api = provider.get("api")
+    if not isinstance(api, str):
+        return f"{proxy_url}/v1"
+    if api.startswith("openai-"):
+        return f"{proxy_url}/v1"
+    return proxy_url
+
+
+def _openclaw_config_with_proxy(cfg: Mapping[str, object], proxy_url: str) -> dict | None:
+    model = _openclaw_primary_model(cfg)
+    if not model or "/" not in model:
+        return None
+    provider_id = model.split("/", 1)[0]
+    models = cfg.get("models")
+    if not isinstance(models, dict):
+        return None
+    providers = models.get("providers")
+    if not isinstance(providers, dict):
+        return None
+    provider = providers.get(provider_id)
+    if not isinstance(provider, dict):
+        return None
+
+    patched = json.loads(json.dumps(cfg))
+    patched_provider = patched["models"]["providers"][provider_id]
+    patched_provider["baseUrl"] = _openclaw_provider_proxy_url(provider, proxy_url)
+    patched_provider.pop("base_url", None)
+    return patched
 
 
 def _openclaw_configured(env: Mapping[str, str]) -> str | None:
@@ -959,10 +1009,12 @@ GEMINI_CLI = Client(
 # ---------------------------------------------------------------------------
 # Multi-backend clients (opencode / Pi / Kimi / iFlow / Hermes / OpenClaw).
 #
-# Each of these reads its upstream ``baseURL`` from its own config file at
+# Most of these read their upstream ``baseURL`` from their own config file at
 # runtime, in a way that overrides any env var we set. Reverse mode would
-# silently capture nothing, so they all carry ``env_redirect_reliable=False``
-# and the CLI defaults them to forward mode (HTTPS_PROXY + CA-MITM).
+# silently capture nothing, so they carry ``env_redirect_reliable=False`` and
+# the CLI defaults them to forward mode (HTTPS_PROXY + CA-MITM). OpenClaw is
+# config-driven too, but ``_openclaw_env`` writes a temporary patched config
+# for the child process, so reverse mode is reliable for it.
 # ``read_configured_upstream`` is still used for the "[client] target: ..."
 # UI line and for the trace's ``upstream_base_url`` field.
 # ---------------------------------------------------------------------------
@@ -1090,7 +1142,6 @@ OPENCLAW = Client(
     protocols=(ANTHROPIC, OPENAI, GEMINI, PASSTHROUGH),
     env_overrides=_openclaw_env,
     read_configured_upstream=_openclaw_configured,
-    env_redirect_reliable=False,
     detect_auth=_openclaw_auth,
     # OpenClaw agent runs do not expose one global auto-approve flag.
 )

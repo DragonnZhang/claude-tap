@@ -80,9 +80,12 @@ def resolve_target_and_mode(
     4. ``fallback_default_target`` — protocol default.
 
     Mode auto-picks ``reverse`` for clients whose env / CLI-arg redirect is
-    reliable. Multi-backend clients (opencode / pi / kimi / iflow / hermes)
-    honor a config-file ``baseURL`` over env, so reverse mode would silently
-    capture nothing — those default to ``forward`` (HTTPS_PROXY + CA-MITM).
+    reliable. Some multi-backend clients (opencode / pi / kimi / iflow /
+    hermes) honor a config-file ``baseURL`` over env, so reverse mode would
+    silently capture nothing — those default to ``forward`` (HTTPS_PROXY +
+    CA-MITM). OpenClaw is also config-driven, but claude-tap patches a
+    temporary OpenClaw config for the child process, so it can stay in reverse
+    mode.
     ``--mode`` always wins.
     """
 
@@ -104,11 +107,9 @@ def resolve_target_and_mode(
     if explicit_mode in ("reverse", "forward"):
         mode = explicit_mode
     elif client is not None and not client.env_redirect_reliable:
-        # Multi-backend clients (opencode / pi / kimi / iflow / hermes)
-        # honor a config-file ``baseURL`` over our env override, so reverse
-        # mode would silently capture nothing. Forward mode (HTTPS_PROXY +
-        # CA-MITM) reliably intercepts regardless of how the client picks
-        # its upstream.
+        # Some config-driven clients honor a config-file ``baseURL`` over our
+        # env override, so reverse mode would silently capture nothing.
+        # Forward mode (HTTPS_PROXY + CA-MITM) reliably intercepts those.
         mode = "forward"
     else:
         mode = "reverse"

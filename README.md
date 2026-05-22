@@ -119,9 +119,9 @@ message points to the right install page.
 
 ### 3. (Optional) Trust the local CA — only for forward-mode CLIs
 
-The multi-backend CLIs (`opencode` / `pi` / `kimi` / `iflow` /
-`hermes` / `openclaw`) and `devin` use forward mode, which terminates
-TLS using a local CA `claude-tap` generates on first use. For Node and Python
+The config-driven CLIs (`opencode` / `pi` / `kimi` / `iflow` /
+`hermes`) and `devin` use forward mode, which terminates TLS using a
+local CA `claude-tap` generates on first use. For Node and Python
 clients, `claude-tap` injects `NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE`
 / `REQUESTS_CA_BUNDLE` automatically — nothing to do.
 
@@ -132,8 +132,11 @@ level:
 claude-tap ca install        # prints platform-specific instructions
 ```
 
-Single-backend CLIs (`claude` / `codex` / `gemini` / `cursor` /
-`qoder`) use reverse mode and never need the CA.
+Reverse-mode CLIs (`claude` / `codex` / `gemini` / `cursor` /
+`qoder` / `openclaw`) never need the CA. For OpenClaw, `claude-tap`
+creates a temporary child-only `openclaw.json` that points the active
+provider at the local proxy, while forwarding to the upstream from the
+user's real config.
 
 ---
 
@@ -184,7 +187,7 @@ claude-tap -L claude -- -p "Explain async/await"
 | Kimi CLI       | `kimi`        | forward      | `~/.kimi/config.toml`                  | ✅ wired |
 | iFlow CLI      | `iflow`       | forward      | `~/.iflow/settings.json`               | ✅ verified |
 | Hermes Agent   | `hermes`      | forward      | `~/.hermes/config.yaml`                | ✅ wired |
-| OpenClaw       | `openclaw`    | forward      | `~/.openclaw/openclaw.json` / `OPENCLAW_CONFIG_PATH` | ✅ wired |
+| OpenClaw       | `openclaw`    | reverse      | `~/.openclaw/openclaw.json` / `OPENCLAW_CONFIG_PATH` | ✅ wired |
 
 "verified" = end-to-end tested with real API calls captured.
 "wired" = code path implemented and unit-tested; needs the user's
@@ -203,12 +206,12 @@ you can override with `-m reverse` or `-m forward`.
 
 ### Reverse mode (default — no CA install)
 
-For **single-backend** CLIs whose env var or CLI flag we can rely on.
+For CLIs whose env var, CLI flag, or child-only config patch we can rely on.
 We:
 
 1. Read your CLI's existing `base_url` from its config file or env.
 2. Set `*_BASE_URL=http://127.0.0.1:<port>` (or `-c openai_base_url=…`
-   for codex) so the CLI talks to us.
+   for codex, or a temporary patched `openclaw.json` for OpenClaw) so the CLI talks to us.
 3. Forward each request to the URL we read in step 1, **preserving
    your private relay or regional endpoint exactly**.
 
@@ -219,7 +222,7 @@ your config and silently sending traffic to `api.anthropic.com`.
 
 ### Forward mode (HTTP CONNECT + TLS-MITM)
 
-For **multi-backend** CLIs (opencode, Pi, Kimi, iFlow, Hermes, OpenClaw) whose
+For **multi-backend** CLIs (opencode, Pi, Kimi, iFlow, Hermes) whose
 config-file `baseURL` is honored over any env var we set.
 Reverse-mode env redirect would silently fail for these, so we:
 
