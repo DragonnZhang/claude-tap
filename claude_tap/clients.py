@@ -87,7 +87,7 @@ class Client:
 
     # Whether ``env_overrides`` actually redirects this client's outbound
     # HTTPS. For multi-backend clients (opencode / pi / kimi / iflow /
-    # hermes) the user's config-file ``baseURL`` overrides any env we set,
+    # hermes / openclaw) the user's config-file ``baseURL`` overrides any env we set,
     # so env-based reverse mode silently fails. For those, we default to
     # forward mode (HTTPS_PROXY + CA-MITM) which redirects regardless of
     # config. Single-backend clients honor their env vars reliably.
@@ -129,6 +129,78 @@ def _read_json(path: Path) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _strip_json5_comments(text: str) -> str:
+    out: list[str] = []
+    i = 0
+    quote: str | None = None
+    escaped = False
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if quote:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "/" and nxt == "/":
+            i += 2
+            while i < len(text) and text[i] not in "\r\n":
+                i += 1
+            continue
+        if ch == "/" and nxt == "*":
+            i += 2
+            while i + 1 < len(text) and text[i : i + 2] != "*/":
+                i += 1
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+_JSON5_KEY_RE = re.compile(r'(?<=[{,\s])([A-Za-z_$][\w$]*)\s*:')
+_JSON5_SINGLE_QUOTE_RE = re.compile(r"'(?:\\.|[^'\\])*'")
+_JSON5_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
+
+
+def _read_json5ish(path: Path) -> dict | None:
+    """Read the JSON5 subset OpenClaw configs normally use.
+
+    OpenClaw documents ``openclaw.json`` as JSON5. Pulling in a full parser
+    would be heavy for one introspection path, so we support the practical
+    subset users edit by hand: comments, unquoted identifier keys, single
+    quoted strings, and trailing commas.
+    """
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    data = _read_json(path)
+    if data is not None:
+        return data
+    try:
+        normalized = _strip_json5_comments(text)
+        normalized = _JSON5_KEY_RE.sub(r'"\1":', normalized)
+        normalized = _JSON5_SINGLE_QUOTE_RE.sub(lambda m: json.dumps(m.group(0)[1:-1]), normalized)
+        normalized = _JSON5_TRAILING_COMMA_RE.sub(r"\1", normalized)
+        parsed = json.loads(normalized)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 # ---------------------------------------------------------------------------
@@ -735,6 +807,106 @@ def _hermes_auth() -> AuthInfo:
 
 
 # ---------------------------------------------------------------------------
+# OpenClaw — JSON5 config with model providers; multi-backend.
+# ---------------------------------------------------------------------------
+
+
+def _openclaw_env(proxy_url: str) -> dict[str, str]:
+    return {
+        "OPENAI_BASE_URL": f"{proxy_url}/v1",
+        "ANTHROPIC_BASE_URL": proxy_url,
+        "GOOGLE_GEMINI_BASE_URL": proxy_url,
+        "OPENROUTER_BASE_URL": f"{proxy_url}/v1",
+        "CUSTOM_BASE_URL": f"{proxy_url}/v1",
+    }
+
+
+def _openclaw_config_path(env: Mapping[str, str]) -> Path:
+    explicit = env.get("OPENCLAW_CONFIG_PATH")
+    if explicit:
+        return Path(explicit).expanduser()
+    state_dir = env.get("OPENCLAW_STATE_DIR")
+    if state_dir:
+        return Path(state_dir).expanduser() / "openclaw.json"
+    return Path.home() / ".openclaw" / "openclaw.json"
+
+
+def _openclaw_primary_model(cfg: Mapping[str, object]) -> str | None:
+    agents = cfg.get("agents")
+    if not isinstance(agents, dict):
+        return None
+    defaults = agents.get("defaults")
+    if not isinstance(defaults, dict):
+        return None
+    model = defaults.get("model")
+    if isinstance(model, str):
+        return model
+    if isinstance(model, dict):
+        primary = model.get("primary")
+        if isinstance(primary, str):
+            return primary
+    models = defaults.get("models")
+    if isinstance(models, dict):
+        for key in models:
+            if isinstance(key, str):
+                return key
+    return None
+
+
+def _openclaw_configured(env: Mapping[str, str]) -> str | None:
+    cfg = _read_json5ish(_openclaw_config_path(env))
+    if not cfg:
+        return None
+    model = _openclaw_primary_model(cfg)
+    if not model or "/" not in model:
+        return None
+    provider_id = model.split("/", 1)[0]
+    models = cfg.get("models")
+    if not isinstance(models, dict):
+        return None
+    providers = models.get("providers")
+    if not isinstance(providers, dict):
+        return None
+    block = providers.get(provider_id)
+    if not isinstance(block, dict):
+        return None
+    base = _strip_url(block.get("baseUrl"))
+    if base:
+        return base
+    return _strip_url(block.get("base_url"))
+
+
+def _openclaw_auth() -> AuthInfo:
+    for var, target in (
+        ("OPENAI_API_KEY", OPENAI.default_target),
+        ("ANTHROPIC_API_KEY", ANTHROPIC.default_target),
+        ("GEMINI_API_KEY", GEMINI.default_target),
+        ("GOOGLE_API_KEY", GEMINI.default_target),
+        ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"),
+    ):
+        if os.environ.get(var):
+            return AuthInfo(
+                logged_in=True,
+                mode="apikey",
+                detail=f"{var} env var",
+                suggested_target=target,
+            )
+    if _openclaw_config_path(os.environ).is_file():
+        return AuthInfo(
+            logged_in=True,
+            mode="unknown",
+            detail="OpenClaw config found (use `openclaw configure` to change providers)",
+            suggested_target=OPENAI.default_target,
+        )
+    return AuthInfo(
+        logged_in=False,
+        mode="unknown",
+        detail="not configured (run `openclaw onboard`, or export a provider API key)",
+        suggested_target=OPENAI.default_target,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Concrete clients
 # ---------------------------------------------------------------------------
 
@@ -785,7 +957,7 @@ GEMINI_CLI = Client(
 
 
 # ---------------------------------------------------------------------------
-# Multi-backend clients (opencode / Pi / Kimi / iFlow / Hermes).
+# Multi-backend clients (opencode / Pi / Kimi / iFlow / Hermes / OpenClaw).
 #
 # Each of these reads its upstream ``baseURL`` from its own config file at
 # runtime, in a way that overrides any env var we set. Reverse mode would
@@ -910,9 +1082,23 @@ HERMES = Client(
     yolo_args=("--yolo",),
 )
 
+OPENCLAW = Client(
+    name="openclaw",
+    cmd="openclaw",
+    label="OpenClaw",
+    install_url="https://github.com/openclaw/openclaw",
+    protocols=(ANTHROPIC, OPENAI, GEMINI, PASSTHROUGH),
+    env_overrides=_openclaw_env,
+    read_configured_upstream=_openclaw_configured,
+    env_redirect_reliable=False,
+    detect_auth=_openclaw_auth,
+    # OpenClaw agent runs do not expose one global auto-approve flag.
+)
+
 
 _REGISTRY: dict[str, Client] = {
-    c.name: c for c in (CLAUDE, CODEX, GEMINI_CLI, OPENCODE, PI, KIMI, IFLOW, CURSOR, QODER, DEVIN, HERMES)
+    c.name: c
+    for c in (CLAUDE, CODEX, GEMINI_CLI, OPENCODE, PI, KIMI, IFLOW, CURSOR, QODER, DEVIN, HERMES, OPENCLAW)
 }
 
 

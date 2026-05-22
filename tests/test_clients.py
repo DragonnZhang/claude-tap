@@ -27,6 +27,8 @@ def fake_home(tmp_path: Path, monkeypatch) -> Path:
         "QODER_CENTER_DOMAIN",
         "OPENROUTER_BASE_URL",
         "CUSTOM_BASE_URL",
+        "OPENCLAW_CONFIG_PATH",
+        "OPENCLAW_STATE_DIR",
         "IFLOW_BASE_URL",
         "PI_CODING_AGENT_DIR",
         "OPENCODE_CONFIG",
@@ -48,6 +50,7 @@ def test_registry_lists_known_clients():
         "hermes",
         "iflow",
         "kimi",
+        "openclaw",
         "opencode",
         "pi",
         "qoder",
@@ -129,6 +132,14 @@ def test_opencode_env_redirects_all_three_backends():
     assert env["GOOGLE_GEMINI_BASE_URL"] == "http://127.0.0.1:8080"
 
 
+def test_openclaw_env_redirects_common_backends():
+    env = clients.get("openclaw").env_overrides("http://127.0.0.1:8080")
+    assert env["OPENAI_BASE_URL"] == "http://127.0.0.1:8080/v1"
+    assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8080"
+    assert env["GOOGLE_GEMINI_BASE_URL"] == "http://127.0.0.1:8080"
+    assert env["OPENROUTER_BASE_URL"] == "http://127.0.0.1:8080/v1"
+
+
 # --- protocols mapping ----------------------------------------------------
 
 
@@ -139,7 +150,7 @@ def test_single_protocol_clients():
 
 
 def test_multi_backend_clients_advertise_three_protocols():
-    for name in ("opencode", "pi", "kimi", "iflow", "hermes"):
+    for name in ("opencode", "pi", "kimi", "iflow", "hermes", "openclaw"):
         names = sorted(p.name for p in clients.get(name).protocols)
         assert {"anthropic", "openai", "gemini"}.issubset(set(names)), name
 
@@ -158,6 +169,7 @@ def test_yolo_args_match_each_cli_published_flag():
         "cursor": ("--yolo",),
         "qoder": ("--yolo",),
         "hermes": ("--yolo",),
+        "openclaw": (),  # no global auto-approve flag on `openclaw agent`
         "devin": ("--permission-mode", "dangerous"),
         "pi": (),  # no single-flag yolo; runner prints a note instead
     }
@@ -394,6 +406,72 @@ def test_hermes_configured_returns_none_for_empty_base_url(fake_home: Path):
     assert clients.get("hermes").read_configured_upstream({}) is None
 
 
+def test_openclaw_configured_reads_active_provider_baseurl(fake_home: Path):
+    cfg = fake_home / ".openclaw" / "openclaw.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(
+        json.dumps(
+            {
+                "agents": {"defaults": {"model": {"primary": "phistory/phistory-dummy"}}},
+                "models": {
+                    "providers": {
+                        "phistory": {
+                            "baseUrl": "https://relay.example.com/v1",
+                            "api": "openai-responses",
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert clients.get("openclaw").read_configured_upstream({}) == "https://relay.example.com/v1"
+
+
+def test_openclaw_configured_reads_json5_config_path(fake_home: Path):
+    cfg = fake_home / "custom-openclaw.json"
+    cfg.write_text(
+        """
+        {
+          // OpenClaw documents this file as JSON5.
+          agents: { defaults: { model: { primary: 'custom/agent-model' } } },
+          models: {
+            providers: {
+              custom: { baseUrl: 'https://custom.example.com/v1', },
+            },
+          },
+        }
+        """,
+        encoding="utf-8",
+    )
+    env = {"OPENCLAW_CONFIG_PATH": str(cfg)}
+    assert clients.get("openclaw").read_configured_upstream(env) == "https://custom.example.com/v1"
+
+
+def test_openclaw_configured_uses_state_dir_default(fake_home: Path):
+    state = fake_home / "oc-state"
+    state.mkdir()
+    (state / "openclaw.json").write_text(
+        json.dumps(
+            {
+                "agents": {"defaults": {"model": {"primary": "local/qwen"}}},
+                "models": {"providers": {"local": {"baseUrl": "http://127.0.0.1:1234/v1"}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert clients.get("openclaw").read_configured_upstream({"OPENCLAW_STATE_DIR": str(state)}) == (
+        "http://127.0.0.1:1234/v1"
+    )
+
+
+def test_openclaw_configured_returns_none_without_active_provider(fake_home: Path):
+    cfg = fake_home / ".openclaw" / "openclaw.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"agents": {"defaults": {"model": {"primary": "missing/model"}}}}), encoding="utf-8")
+    assert clients.get("openclaw").read_configured_upstream({}) is None
+
+
 def test_cursor_configured_reads_env():
     assert clients.get("cursor").read_configured_upstream({"CURSOR_API_BASE_URL": "https://x"}) == "https://x"
     assert clients.get("cursor").read_configured_upstream({}) is None
@@ -485,7 +563,19 @@ def test_claude_purges_nesting_env():
 
 
 def test_other_clients_have_no_purge_list():
-    for name in ("codex", "gemini", "opencode", "pi", "kimi", "iflow", "cursor", "qoder", "devin", "hermes"):
+    for name in (
+        "codex",
+        "gemini",
+        "opencode",
+        "pi",
+        "kimi",
+        "iflow",
+        "cursor",
+        "qoder",
+        "devin",
+        "hermes",
+        "openclaw",
+    ):
         assert clients.get(name).pre_launch_env_purge == ()
 
 
@@ -495,7 +585,7 @@ def test_other_clients_have_no_purge_list():
 def test_proprietary_client_auth_detect_messages_are_actionable():
     """No creds → tell the user how to fix it (login command or env var)."""
     actionable_keywords = ("login", "configure", "_TOKEN", "_API_KEY", "_ACCESS_TOKEN")
-    for name in ("cursor", "qoder", "devin"):
+    for name in ("cursor", "qoder", "devin", "openclaw"):
         info = clients.get(name).detect_auth()
         assert any(k.lower() in info.detail.lower() for k in actionable_keywords), (
             f"{name}: detail not actionable: {info.detail!r}"
@@ -506,7 +596,7 @@ def test_proprietary_client_auth_detect_messages_are_actionable():
 
 
 def test_is_multi_backend_for_multi_protocol_clients():
-    for name in ("opencode", "pi", "kimi", "iflow", "hermes"):
+    for name in ("opencode", "pi", "kimi", "iflow", "hermes", "openclaw"):
         assert clients.is_multi_backend(clients.get(name)), name
 
 
@@ -523,5 +613,5 @@ def test_env_redirect_reliable_matches_client_capability():
     forward mode."""
     for name in ("claude", "codex", "gemini", "cursor", "qoder"):
         assert clients.get(name).env_redirect_reliable, name
-    for name in ("opencode", "pi", "kimi", "iflow", "hermes", "devin"):
+    for name in ("opencode", "pi", "kimi", "iflow", "hermes", "openclaw", "devin"):
         assert not clients.get(name).env_redirect_reliable, name

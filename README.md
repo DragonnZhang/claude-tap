@@ -112,15 +112,16 @@ linked official docs in case the install command has changed.
 | Qoder CLI      | `npm install -g @qoder-ai/qodercli`                   | [qoder.com/cli](https://qoder.com/cli) |
 | Devin CLI      | follow the install script at the docs link            | [docs.devin.ai](https://docs.devin.ai/get-started/devin-intro) |
 | Hermes Agent   | `pipx install hermes-agent`                           | [github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) |
+| OpenClaw       | `npm install -g openclaw`                             | [github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) |
 
 If the binary isn't found when you run `claude-tap <name>`, the error
 message points to the right install page.
 
 ### 3. (Optional) Trust the local CA — only for forward-mode CLIs
 
-The five multi-backend CLIs (`opencode` / `pi` / `kimi` / `iflow` /
-`hermes`) and `devin` use forward mode, which terminates TLS using a
-local CA `claude-tap` generates on first use. For Node and Python
+The multi-backend CLIs (`opencode` / `pi` / `kimi` / `iflow` /
+`hermes` / `openclaw`) and `devin` use forward mode, which terminates
+TLS using a local CA `claude-tap` generates on first use. For Node and Python
 clients, `claude-tap` injects `NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE`
 / `REQUESTS_CA_BUNDLE` automatically — nothing to do.
 
@@ -183,13 +184,15 @@ claude-tap -L claude -- -p "Explain async/await"
 | Kimi CLI       | `kimi`        | forward      | `~/.kimi/config.toml`                  | ✅ wired |
 | iFlow CLI      | `iflow`       | forward      | `~/.iflow/settings.json`               | ✅ verified |
 | Hermes Agent   | `hermes`      | forward      | `~/.hermes/config.yaml`                | ✅ wired |
+| OpenClaw       | `openclaw`    | forward      | `~/.openclaw/openclaw.json` / `OPENCLAW_CONFIG_PATH` | ✅ wired |
 
 "verified" = end-to-end tested with real API calls captured.
 "wired" = code path implemented and unit-tested; needs the user's
 credentials to validate the full loop.
 
 You can use `claude-tap <name>` for any of them:
-`claude-tap codex`, `claude-tap kimi`, `claude-tap opencode`, …
+`claude-tap codex`, `claude-tap kimi`, `claude-tap opencode`,
+`claude-tap openclaw`, …
 
 ---
 
@@ -216,7 +219,7 @@ your config and silently sending traffic to `api.anthropic.com`.
 
 ### Forward mode (HTTP CONNECT + TLS-MITM)
 
-For **multi-backend** CLIs (opencode, Pi, Kimi, iFlow, Hermes) whose
+For **multi-backend** CLIs (opencode, Pi, Kimi, iFlow, Hermes, OpenClaw) whose
 config-file `baseURL` is honored over any env var we set.
 Reverse-mode env redirect would silently fail for these, so we:
 

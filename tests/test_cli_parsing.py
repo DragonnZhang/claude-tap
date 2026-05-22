@@ -211,6 +211,8 @@ def fake_home(tmp_path: Path, monkeypatch) -> Path:
         "ANTHROPIC_BASE_URL",
         "GOOGLE_GEMINI_BASE_URL",
         "OPENROUTER_BASE_URL",
+        "OPENCLAW_CONFIG_PATH",
+        "OPENCLAW_STATE_DIR",
     ):
         monkeypatch.delenv(v, raising=False)
     return tmp_path
@@ -287,11 +289,14 @@ def test_resolve_codex_reads_user_provider_from_toml(fake_home: Path):
 
 
 def test_resolve_config_driven_clients_force_forward_mode(fake_home: Path):
-    """opencode/pi/kimi/iflow/hermes honor a config-file ``baseURL`` over
-    env vars. Reverse mode would silently capture nothing, so we default
-    to forward (HTTPS_PROXY + CA) for these. Verified empirically against
-    real opencode binary."""
-    for name in ("opencode", "pi", "kimi", "iflow", "hermes", "devin"):
+    """Config-driven clients and rustls clients default to forward mode.
+
+    opencode/pi/kimi/iflow/hermes/openclaw honor a config-file ``baseURL``
+    over env vars. Devin is single-backend, but its rustls binary does not
+    honor our env redirect. Reverse mode would silently capture nothing for
+    these clients.
+    """
+    for name in ("opencode", "pi", "kimi", "iflow", "hermes", "openclaw", "devin"):
         client = clients_mod.get(name)
         _, _, mode = resolve_target_and_mode(
             client=client,

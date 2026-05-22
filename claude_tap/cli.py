@@ -159,6 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  claude-tap codex                          # auto-picks ChatGPT OAuth target if present\n"
             "  claude-tap gemini                         # uses GEMINI_API_KEY env var\n"
             "  claude-tap opencode                       # multi-protocol: anthropic+openai+gemini\n"
+            "  claude-tap openclaw                       # OpenClaw via configured provider\n"
             "  claude-tap proxy --protocol openai        # standalone proxy, OpenAI paths only\n"
             "  claude-tap run gemini --export-prompt prompt.md -- -p hi\n"
             "  claude-tap export trace.jsonl -o out.md\n"
