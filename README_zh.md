@@ -1,193 +1,198 @@
 # claude-tap
 
-[![PyPI version](https://img.shields.io/pypi/v/claude-tap.svg)](https://pypi.org/project/claude-tap/)
-[![PyPI downloads](https://img.shields.io/pypi/dm/claude-tap.svg)](https://pypi.org/project/claude-tap/)
-[![Python version](https://img.shields.io/pypi/pyversions/claude-tap.svg)](https://pypi.org/project/claude-tap/)
-[![License](https://img.shields.io/github/license/liaohch3/claude-tap.svg)](https://github.com/liaohch3/claude-tap/blob/main/LICENSE)
-
 [English](README.md)
 
-拦截并查看 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 或 [Codex CLI](https://github.com/openai/codex) 的所有 API 流量。看清它们如何构造 system prompt、管理对话历史、选择工具、优化 token 用量——通过一个美观的 trace 查看器。
+追踪 AI 编程 CLI 实际发给模型 API 的内容。
 
-![演示](docs/demo_zh.gif)
+`claude-tap` 会把 Claude Code、Codex CLI、Gemini CLI、opencode、Kimi、
+OpenClaw 等工具放到本地代理后面运行，记录请求、流式响应、工具列表、token
+用量和 system prompt，并生成一个可以直接打开的 HTML trace。
 
-![亮色模式](docs/viewer-zh.png)
+适合用来回答这些问题：
 
-<details>
-<summary>暗色模式 / Diff 视图</summary>
+- 这个 CLI 实际发了什么 system prompt？
+- 模型看到了哪些工具？
+- 请求打到了 Anthropic、OpenAI、Gemini，还是你的自定义 relay？
+- 两个 CLI 版本之间 prompt 改了什么？
+- 一次 coding-agent 运行里到底发生了什么？
 
-![暗色模式](docs/viewer-dark.png)
-![结构化 Diff](docs/diff-modal.png)
-![字符级 Diff](docs/billing-header-diff.png)
-
-</details>
+这个 fork 目前从 GitHub 安装。PyPI 上的 `claude-tap` 还是旧项目，还不包含这次重写。
 
 ## 安装
 
-需要 Python 3.11+ 和 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)（使用 `--tap-client codex` 时需要 [Codex CLI](https://github.com/openai/codex)）。
+需要 Python 3.11+ 和 `git`。
 
 ```bash
-# 推荐
-uv tool install claude-tap
-
-# 或用 pip
-pip install claude-tap
+uv tool install git+https://github.com/WEIFENG2333/claude-tap.git
 ```
 
-升级: `uv tool upgrade claude-tap` 或 `pip install --upgrade claude-tap`
-
-## 使用
-
-### Claude Code
+验证：
 
 ```bash
-# 基本用法 — 启动带 trace 的 Claude Code
-claude-tap
-
-# 实时模式 — 在浏览器中实时观察 API 调用
-claude-tap --tap-live
-
-# 透传参数给 Claude Code
-claude-tap -- --model claude-opus-4-6
-claude-tap -c    # 继续上次对话
-
-# 跳过所有权限确认（自动批准工具调用）
-claude-tap -- --dangerously-skip-permissions
-
-# 全功能组合：实时查看器 + 跳过权限确认 + 指定模型
-claude-tap --tap-live -- --dangerously-skip-permissions --model claude-sonnet-4-6
+claude-tap --version
 ```
 
-### Codex CLI
-
-Codex CLI 支持两种认证方式，对应不同的上游目标：
-
-| 认证方式 | 如何认证 | 上游目标 | 说明 |
-|---------|---------|---------|------|
-| **OAuth**（ChatGPT 付费套餐） | `codex login` | `https://chatgpt.com/backend-api/codex` | ChatGPT Plus/Pro/Team 用户默认方式 |
-| **API Key** | 设置 `OPENAI_API_KEY` | `https://api.openai.com`（默认） | 通过 OpenAI Platform 按量付费 |
+如果找不到 `claude-tap`，检查 uv tool 的 bin 目录是否在 `PATH` 里。也可以直接从
+GitHub 运行：
 
 ```bash
-# OAuth 用户（ChatGPT Plus/Pro/Team）— 需指定 target
-claude-tap --tap-client codex --tap-target https://chatgpt.com/backend-api/codex
-
-# API Key 用户 — 默认 target 即可
-claude-tap --tap-client codex
-
-# 指定模型
-claude-tap --tap-client codex -- --model codex-mini-latest
-
-# 全自动模式（跳过所有权限确认）
-claude-tap --tap-client codex -- --full-auto
-
-# OAuth + 全自动 + 实时查看器
-claude-tap --tap-client codex --tap-target https://chatgpt.com/backend-api/codex --tap-live -- --full-auto
+uv tool run --from git+https://github.com/WEIFENG2333/claude-tap.git claude-tap --version
 ```
 
-### 浏览器预览
+升级这个 fork：
 
 ```bash
-# 禁用退出后自动打开 HTML 查看器（默认开启）
-claude-tap --tap-no-open
-
-# 实时模式 — 客户端运行时在浏览器中实时查看
-claude-tap --tap-live
-claude-tap --tap-live --tap-live-port 3000    # 固定实时查看器端口
+uv tool install --force git+https://github.com/WEIFENG2333/claude-tap.git
 ```
 
-客户端退出后，也可以手动打开生成的查看器：
+## 快速开始
+
+在原本的 AI CLI 命令前面加上 `claude-tap`：
 
 ```bash
-open .traces/trace_*.html
+claude-tap claude -- -p "What is 2+2?"
+claude-tap codex -- exec "Say hi"
+claude-tap gemini -- -p "Explain async/await"
 ```
 
-### 纯代理模式
+CLI 退出后，会输出类似这些文件：
 
-仅启动代理，不自动启动客户端 — 适用于自定义场景或在另一个终端手动连接：
+```text
+[claude-tap] summary:
+  api_calls:    2
+  tokens:       352 in / 15 out
+  trace:        ./.traces/2026-05-06/trace_120137.jsonl
+  log:          ./.traces/2026-05-06/trace_120137.log
+  view:         ./.traces/2026-05-06/trace_120137.html
+```
+
+直接打开 HTML 文件就能看完整 trace，不需要启动服务器。
+
+如果想在 CLI 运行时实时看 trace，加 `-L`：
 
 ```bash
-# Claude Code
-claude-tap --tap-no-launch --tap-port 8080
-# 在另一个终端:
+claude-tap -L claude -- -p "Explain async/await"
+```
+
+## 导出 Prompt 快照
+
+如果你只关心 system prompt / instructions / tools，不需要完整 viewer，可以用
+`--export-prompt`：
+
+```bash
+claude-tap run claude --export-prompt claude.prompt.md --no-open -- -p hi
+claude-tap run codex --export-prompt codex.prompt.md --no-open -- exec "hi"
+claude-tap run gemini --export-prompt gemini.prompt.md --no-open -- -p hi
+```
+
+如果某个 CLI 自己还有子命令，把它的参数放在 `--` 后面：
+
+```bash
+claude-tap run openclaw --export-prompt openclaw.prompt.md --no-open -- agent --local --message hi --json
+```
+
+prompt 导出成功后，即使子进程后面以非 0 状态退出，`claude-tap` 也会把这次运行视为成功捕获。
+这对只关心 prompt 的自动化任务很有用，例如按版本归档 prompt。
+
+也可以从已有 trace 里导出 prompt：
+
+```bash
+claude-tap export ./.traces/2026-05-06/trace_120137.jsonl --format prompt-md -o prompt.md
+```
+
+## 支持的 CLI
+
+你需要先安装自己想追踪的 AI CLI。`claude-tap` 不会帮你安装 Claude Code、Codex、
+Gemini 这些工具。
+
+| CLI | 命令 | 默认模式 | 状态 |
+| --- | --- | --- | --- |
+| Claude Code | `claude-tap claude` | reverse | verified |
+| Codex CLI | `claude-tap codex` | reverse | verified |
+| Gemini CLI | `claude-tap gemini` | reverse | verified |
+| OpenClaw | `claude-tap openclaw` | reverse | wired |
+| opencode | `claude-tap opencode` | forward | verified |
+| Kimi CLI | `claude-tap kimi` | forward | wired |
+| Pi | `claude-tap pi` | forward | wired |
+| Hermes Agent | `claude-tap hermes` | forward | wired |
+| iFlow CLI | `claude-tap iflow` | forward | verified |
+| Cursor Agent | `claude-tap cursor` | reverse | wired |
+| Qoder CLI | `claude-tap qoder` | reverse | wired |
+| Devin CLI | `claude-tap devin` | forward | wired |
+
+`verified` 表示做过真实端到端捕获。`wired` 表示代码路径已实现并有单测，但完整真实运行可能还需要用户自己的登录态或 API key。
+
+## 原理
+
+`claude-tap` 会启动一个本地代理，再把选中的 CLI 作为子进程启动，并让这个子进程请求本地代理。
+
+它有两种拦截模式：
+
+| 模式 | 用于 | 做法 |
+| --- | --- | --- |
+| reverse | Claude Code、Codex、Gemini、OpenClaw | 设置 base URL、CLI 参数或临时子进程配置，让 CLI 请求 `127.0.0.1` |
+| forward | opencode、Kimi、Pi、Hermes、iFlow | 设置 `HTTPS_PROXY`，并用本地 CA 拦截 HTTPS |
+
+两种模式都会尽量保留你原本配置的真实 upstream。如果你的 CLI 本来就走私有 relay 或区域 endpoint，
+`claude-tap` 会继续转发到那里，而不是偷偷换成官方默认地址。
+
+forward 模式第一次使用时会生成本地 CA。Node 和 Python 客户端通常会通过环境变量自动信任它。
+如果某个 CLI 的 TLS 栈不认这些环境变量，可以运行：
+
+```bash
+claude-tap ca install
+```
+
+## 常用命令
+
+```bash
+# 追踪一次普通 CLI 运行
+claude-tap claude -- -p "What is 2+2?"
+
+# 运行后不要自动打开浏览器
+claude-tap claude --no-open -- -p "hi"
+
+# 指定真实上游，例如自己的 relay
+claude-tap codex -t https://my-relay.example.com/v1
+
+# 只启动代理，再让其他进程连进来
+claude-tap proxy -p 8080
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 claude
 
-# Codex CLI（OAuth）
-claude-tap --tap-client codex --tap-target https://chatgpt.com/backend-api/codex --tap-no-launch --tap-port 8080
-# 在另一个终端:
-OPENAI_BASE_URL=http://127.0.0.1:8080/v1 codex
+# 浏览历史 trace
+claude-tap live
 
-# Codex CLI（API Key）
-claude-tap --tap-client codex --tap-no-launch --tap-port 8080
-# 在另一个终端:
-OPENAI_BASE_URL=http://127.0.0.1:8080/v1 codex
+# 导出 trace
+claude-tap export ./.traces/2026-05-06/trace_120137.jsonl -o report.md
+claude-tap export ./.traces/2026-05-06/trace_120137.jsonl --format html
 ```
 
-### 常用组合
+完整参数看：
 
 ```bash
-# 追踪 Claude Code：实时查看器 + 自动批准
-claude-tap --tap-live -- --dangerously-skip-permissions
-
-# 追踪 Codex（OAuth）：实时查看器 + 全自动
-claude-tap --tap-client codex --tap-target https://chatgpt.com/backend-api/codex --tap-live -- --full-auto
-
-# 自定义 trace 输出目录
-claude-tap --tap-output-dir ./my-traces
-
-# 仅保留最近 10 次 trace
-claude-tap --tap-max-traces 10
+claude-tap --help
+claude-tap run --help
 ```
 
-### CLI 选项
+## 安全提醒
 
-除以下 `--tap-*` 参数外，所有参数均透传给所选客户端：
+`claude-tap` 会记录子进程 CLI 发送和接收的内容。trace 里可能包含 prompt、文件路径、
+工具结果、token 和 provider 元数据。公开分享前请先检查。
 
-```
---tap-client CLIENT      启动的客户端: claude（默认）或 codex
---tap-target URL         上游 API 地址（默认: 根据客户端自动选择）
---tap-live               启动实时查看器（自动打开浏览器）
---tap-live-port PORT     实时查看器端口（默认: 自动分配）
---tap-no-open            退出后不自动打开 HTML 查看器（默认开启）
---tap-output-dir DIR     Trace 输出目录（默认: ./.traces）
---tap-port PORT          代理端口（默认: 自动分配）
---tap-host HOST          绑定地址（默认: 127.0.0.1，--tap-no-launch 模式下为 0.0.0.0）
---tap-no-launch          仅启动代理，不启动客户端
---tap-max-traces N       最大保留 trace 数量（默认: 50，0 = 不限）
---tap-no-update-check    禁用启动时的 PyPI 更新检查
---tap-no-auto-update     仅检查更新，不自动下载
---tap-proxy-mode MODE    代理模式: reverse（默认）或 forward
+默认情况下代理只监听本机。`run` 默认绑定 `127.0.0.1`；如果确实需要让外部连接，
+`proxy` 可以显式指定 `--host`。
+
+## 开发
+
+```bash
+git clone https://github.com/WEIFENG2333/claude-tap.git
+cd claude-tap
+uv sync --extra dev
+uv run claude-tap --version
 ```
 
-## 查看器功能
+架构、贡献和 coding-agent 指引见 [`CLAUDE.md`](CLAUDE.md) 和 [`AGENTS.md`](AGENTS.md)。
 
-查看器是一个自包含的 HTML 文件（零外部依赖）：
+## License
 
-- **结构化 Diff** — 对比相邻请求的变化：新增/删除的消息、system prompt diff、字符级高亮
-- **路径过滤** — 按 API 端点筛选（如仅显示 `/v1/messages`）
-- **模型分组** — 侧边栏按模型分组（Opus > Sonnet > Haiku）
-- **Token 用量分析** — 输入 / 输出 / 缓存读取 / 缓存创建
-- **工具检查器** — 可展开的卡片，显示工具名称、描述和参数 schema
-- **全文搜索** — 搜索消息、工具、prompt 和响应
-- **暗色模式** — 切换亮色/暗色主题（跟随系统偏好）
-- **键盘导航** — `j`/`k` 或方向键
-- **复制助手** — 一键复制请求 JSON 或 cURL 命令
-- **多语言** — English, 简体中文, 日本語, 한국어, Français, العربية, Deutsch, Русский
-
-## 架构
-
-![架构图](docs/architecture.png)
-
-**工作原理:**
-
-1. `claude-tap` 启动反向代理，并以对应服务商的 base URL 指向代理来启动所选客户端（`claude` 或 `codex`）
-2. 所有 API 请求流经: 代理 → 上游 API → 代理返回
-3. SSE 流式响应实时转发（零额外延迟）
-4. 每个请求-响应对记录到 `trace.jsonl`
-5. 退出时生成自包含的 HTML 查看器
-6. 实时模式（可选）通过 SSE 向浏览器广播更新
-
-**核心特性:** 🔒 API key 自动脱敏 · ⚡ 零延迟 · 📦 自包含查看器 · 🔄 实时模式
-
-## 许可证
-
-MIT
+[MIT](LICENSE)
