@@ -139,7 +139,9 @@ async def test_openclaw_temp_config_is_removed_after_run(tmp_path, monkeypatch):
         json.dumps(
             {
                 "agents": {"defaults": {"model": {"primary": "local/test"}}},
-                "models": {"providers": {"local": {"baseUrl": "https://relay.example.com/v1", "api": "openai-responses"}}},
+                "models": {
+                    "providers": {"local": {"baseUrl": "https://relay.example.com/v1", "api": "openai-responses"}}
+                },
             }
         ),
         encoding="utf-8",

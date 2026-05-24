@@ -173,7 +173,7 @@ def _strip_json5_comments(text: str) -> str:
     return "".join(out)
 
 
-_JSON5_KEY_RE = re.compile(r'(?<=[{,\s])([A-Za-z_$][\w$]*)\s*:')
+_JSON5_KEY_RE = re.compile(r"(?<=[{,\s])([A-Za-z_$][\w$]*)\s*:")
 _JSON5_SINGLE_QUOTE_RE = re.compile(r"'(?:\\.|[^'\\])*'")
 _JSON5_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
 
@@ -1148,8 +1148,7 @@ OPENCLAW = Client(
 
 
 _REGISTRY: dict[str, Client] = {
-    c.name: c
-    for c in (CLAUDE, CODEX, GEMINI_CLI, OPENCODE, PI, KIMI, IFLOW, CURSOR, QODER, DEVIN, HERMES, OPENCLAW)
+    c.name: c for c in (CLAUDE, CODEX, GEMINI_CLI, OPENCODE, PI, KIMI, IFLOW, CURSOR, QODER, DEVIN, HERMES, OPENCLAW)
 }
 
 
