@@ -986,10 +986,10 @@ CODEX = Client(
     cli_args_overrides=_codex_cli_args,
     read_configured_upstream=_codex_configured,
     detect_auth=_codex_auth,
-    # ``--full-auto`` sandboxes the workspace and auto-approves inside it;
-    # the no-sandbox flavour is ``--dangerously-bypass-approvals-and-sandbox``
-    # but that's a sharper edge than this default warrants.
-    yolo_args=("--full-auto",),
+    # codex >=0.13 dropped the ``--full-auto`` shorthand.
+    # ``--dangerously-bypass-approvals-and-sandbox`` skips all approval prompts
+    # and runs without a sandbox — full yolo.
+    yolo_args=("--dangerously-bypass-approvals-and-sandbox",),
 )
 
 

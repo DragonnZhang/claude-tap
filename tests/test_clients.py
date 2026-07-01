@@ -191,7 +191,7 @@ def test_yolo_args_match_each_cli_published_flag():
     # from each CLI's own --help output, not invented.
     expected = {
         "claude": ("--dangerously-skip-permissions",),
-        "codex": ("--full-auto",),
+        "codex": ("--dangerously-bypass-approvals-and-sandbox",),
         "gemini": ("--yolo",),
         "opencode": ("--dangerously-skip-permissions",),
         "kimi": ("--yolo",),
