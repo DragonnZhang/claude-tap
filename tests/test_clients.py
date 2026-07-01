@@ -62,6 +62,30 @@ def test_registry_get_unknown_raises():
         clients.get("does-not-exist")
 
 
+def test_generic_builds_forward_passthrough_client():
+    from claude_tap.protocols import PASSTHROUGH
+
+    c = clients.generic("tracecli")
+    assert c.name == "tracecli"
+    assert c.cmd == "tracecli"
+    assert c.protocols == (PASSTHROUGH,)
+    # env_redirect_reliable=False → resolve_target_and_mode picks forward mode.
+    assert c.env_redirect_reliable is False
+    # No built-in redirect knowledge for an unknown CLI.
+    assert c.env_overrides("http://127.0.0.1:8080") == {}
+    assert c.cli_args_overrides("http://127.0.0.1:8080", {}) == []
+
+
+def test_get_or_generic_returns_builtin_when_known():
+    assert clients.get_or_generic("claude") is clients.get("claude")
+
+
+def test_get_or_generic_falls_back_to_generic_for_unknown():
+    c = clients.get_or_generic("tracecli")
+    assert c.cmd == "tracecli"
+    assert c.env_redirect_reliable is False
+
+
 # --- env_overrides --------------------------------------------------------
 
 

@@ -1158,6 +1158,31 @@ def get(name: str) -> Client:
     return _REGISTRY[name]
 
 
+def generic(cmd: str) -> Client:
+    """Build an ad-hoc client for a CLI claude-tap has no built-in knowledge of.
+
+    We can't know how ``cmd`` configures its upstream, so we run in forward
+    mode: ``env_redirect_reliable=False`` makes ``resolve_target_and_mode`` pick
+    ``forward``, which injects standard ``HTTPS_PROXY`` + CA-trust env vars and
+    captures whatever the tool talks to via TLS-MITM. PASSTHROUGH accepts every
+    path but produces no structured snapshot (raw sse_events / ws_events only).
+    """
+    return Client(
+        name=cmd,
+        cmd=cmd,
+        label=cmd,
+        install_url="",
+        protocols=(PASSTHROUGH,),
+        env_redirect_reliable=False,
+    )
+
+
+def get_or_generic(name: str) -> Client:
+    """Return the registered client for ``name``, or a generic forward-mode
+    passthrough client when ``name`` is not a built-in."""
+    return _REGISTRY.get(name) or generic(name)
+
+
 def names() -> list[str]:
     return sorted(_REGISTRY)
 

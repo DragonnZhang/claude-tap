@@ -117,19 +117,18 @@ def resolve_target_and_mode(
     return target, target_source, mode
 
 
-def _resolve_live_default(args: argparse.Namespace, *, launch_client: bool) -> bool:
+def _resolve_live_default(args: argparse.Namespace) -> bool:
     """Decide whether to start the live viewer when ``--live`` was not given.
 
     * Explicit ``-L`` / ``--live`` → on.
     * Explicit ``--no-live`` → off.
-    * Otherwise: on iff this is an interactive ``run`` (TTY, not in CI).
-      ``proxy`` defaults off — that mode is typically used headlessly.
+    * Otherwise: on iff interactive (TTY, not in CI), for both ``run`` and
+      ``proxy``. Headless / piped / CI runs stay off so scripts don't spawn a
+      viewer or open a browser unexpectedly.
     """
     if args.live is True:
         return True
     if args.live is False:
-        return False
-    if not launch_client:
         return False
     if not sys.stdin.isatty():
         return False
@@ -234,8 +233,12 @@ def _build_run_parser(sub: argparse._SubParsersAction) -> None:
         "client",
         nargs="?",
         default="claude",
-        choices=clients_mod.names(),
-        help="which client to launch (default: claude)",
+        metavar="CLIENT",
+        help=(
+            "which client to launch (default: claude). Built-in: "
+            f"{', '.join(clients_mod.names())}. Any other name runs that command "
+            "in generic forward-proxy mode (passthrough capture)."
+        ),
     )
     # Yolo (auto-approve all actions) is on by default. Each client
     # translates this to its own equivalent flag (claude:
@@ -407,7 +410,13 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
     #   - ``run <client>``: we have a Client; its protocols decide what we accept.
     #   - ``proxy --protocol …``: no client; user picks protocols directly.
     if launch_client:
-        client = clients_mod.get(getattr(args, "client", None) or "claude")
+        client_name = getattr(args, "client", None) or "claude"
+        client = clients_mod.get_or_generic(client_name)
+        if client_name not in clients_mod.names():
+            sys.stdout.write(
+                f"[claude-tap] '{client_name}' is not a built-in client; running in generic "
+                "forward-proxy mode (passthrough capture, no structured snapshot)\n"
+            )
         protocols = client.protocols
         # For target auto-detection: ask the client.
         auth = client.detect_auth()
@@ -494,7 +503,7 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
     sys.stdout.write(f"[claude-tap] trace: {trace_path}\n")
     sys.stdout.flush()
 
-    live_enabled = _resolve_live_default(args, launch_client=launch_client)
+    live_enabled = _resolve_live_default(args)
     live_server: LiveViewerServer | None = None
     if live_enabled:
         live_server = LiveViewerServer(

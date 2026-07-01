@@ -366,39 +366,39 @@ class _Args:
 def test_live_explicit_on_always_wins(monkeypatch):
     monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: False)})())
     monkeypatch.setenv("CI", "1")
-    assert _resolve_live_default(_Args(live=True), launch_client=True) is True
-    assert _resolve_live_default(_Args(live=True), launch_client=False) is True
+    assert _resolve_live_default(_Args(live=True)) is True
 
 
 def test_live_explicit_off_always_wins(monkeypatch):
     monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())
     monkeypatch.delenv("CI", raising=False)
-    assert _resolve_live_default(_Args(live=False), launch_client=True) is False
+    assert _resolve_live_default(_Args(live=False)) is False
 
 
-def test_live_default_off_for_proxy_subcommand(monkeypatch):
+def test_live_default_on_for_interactive_proxy(monkeypatch):
+    """Interactive ``proxy`` now defaults live on, same as ``run``."""
     monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())
     monkeypatch.delenv("CI", raising=False)
-    assert _resolve_live_default(_Args(live=None), launch_client=False) is False
+    assert _resolve_live_default(_Args(live=None)) is True
 
 
 def test_live_default_off_when_stdin_is_pipe(monkeypatch):
     """Headless / piped invocations get no browser auto-open."""
     monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: False)})())
     monkeypatch.delenv("CI", raising=False)
-    assert _resolve_live_default(_Args(live=None), launch_client=True) is False
+    assert _resolve_live_default(_Args(live=None)) is False
 
 
 def test_live_default_off_in_ci(monkeypatch):
     monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())
     monkeypatch.setenv("CI", "true")
-    assert _resolve_live_default(_Args(live=None), launch_client=True) is False
+    assert _resolve_live_default(_Args(live=None)) is False
 
 
 def test_live_default_on_for_interactive_run(monkeypatch):
     monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())
     monkeypatch.delenv("CI", raising=False)
-    assert _resolve_live_default(_Args(live=None), launch_client=True) is True
+    assert _resolve_live_default(_Args(live=None)) is True
 
 
 def test_resolve_proxy_only_no_client(fake_home: Path):
