@@ -6,10 +6,12 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from claude_tap.clients import LAUNCH_CLEANUP_PATH_ENV, Client
@@ -24,6 +26,9 @@ _PROXY_ENV_VARS = (
     "https_proxy",
     "all_proxy",
 )
+
+_CODEX_APP_BUNDLE_ID = "com.openai.codex"
+_CODEX_APP_QUIT_TIMEOUT_SECONDS = 10.0
 
 
 def _install_forward_proxy_env(env: dict[str, str], proxy_url: str, ca_cert_path: Path | None) -> None:
@@ -78,6 +83,95 @@ def _strip_proxy_env_for_reverse(env: dict[str, str]) -> None:
     env["no_proxy"] = "127.0.0.1,localhost"
 
 
+def _find_processes_by_command(command_path: str) -> list[int]:
+    if sys.platform != "darwin":
+        return []
+    try:
+        proc = subprocess.run(
+            ["pgrep", "-f", re.escape(command_path)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return []
+
+    pids: list[int] = []
+    current_pid = os.getpid()
+    for line in proc.stdout.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        if pid != current_pid:
+            pids.append(pid)
+    return pids
+
+
+def _quit_codex_app() -> bool:
+    if sys.platform != "darwin":
+        return False
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", f'tell application id "{_CODEX_APP_BUNDLE_ID}" to quit'],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
+    return proc.returncode == 0
+
+
+def _wait_for_processes_to_exit(command_path: str, timeout_seconds: float = _CODEX_APP_QUIT_TIMEOUT_SECONDS) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not _find_processes_by_command(command_path):
+            return True
+        time.sleep(0.2)
+    return not _find_processes_by_command(command_path)
+
+
+def _confirm_quit_existing_codex_app(pids: list[int]) -> bool:
+    pid_list = ", ".join(str(pid) for pid in pids)
+    try:
+        answer = input(
+            f"[claude-tap] Codex App is already running (pid {pid_list}). "
+            "Quit it so claude-tap can relaunch it with proxy capture? [Y/n] "
+        )
+    except EOFError:
+        return False
+    return answer.strip().lower() in {"", "y", "yes"}
+
+
+def _prepare_codex_app_launch(client: Client) -> bool:
+    existing_pids = _find_processes_by_command(client.cmd)
+    if not existing_pids:
+        return True
+
+    if not sys.stdin.isatty():
+        sys.stderr.write(
+            "[claude-tap] Codex App is already running. Quit it before running "
+            "`claude-tap run codexapp` so the app-server inherits proxy settings.\n"
+        )
+        return False
+
+    if not _confirm_quit_existing_codex_app(existing_pids):
+        sys.stderr.write("[claude-tap] Aborted; existing Codex App was left running.\n")
+        return False
+
+    sys.stdout.write("[claude-tap] Quitting existing Codex App...\n")
+    sys.stdout.flush()
+    if not _quit_codex_app():
+        sys.stderr.write("[claude-tap] Failed to ask Codex App to quit. Quit it manually and retry.\n")
+        return False
+    if not _wait_for_processes_to_exit(client.cmd):
+        sys.stderr.write("[claude-tap] Timed out waiting for Codex App to quit. Quit it manually and retry.\n")
+        return False
+    return True
+
+
 async def run_client(
     *,
     client: Client,
@@ -99,6 +193,9 @@ async def run_client(
         sys.stderr.write(
             f"\nError: '{client.cmd}' not found in PATH.\nInstall {client.label} first: {client.install_url}\n"
         )
+        return 1
+
+    if client.name == "codexapp" and not _prepare_codex_app_launch(client):
         return 1
 
     env = os.environ.copy()

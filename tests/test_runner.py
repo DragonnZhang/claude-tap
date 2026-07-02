@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from claude_tap.cli import _export_prompt_from_trace
-from claude_tap.clients import GEMINI_CLI, OPENCLAW, OPENCODE
+from claude_tap.clients import CODEX_APP_CLIENT, GEMINI_CLI, OPENCLAW, OPENCODE
 from claude_tap.runner import run_client
 
 
@@ -94,6 +94,84 @@ async def test_yolo_args_can_be_inserted_after_client_subcommand(monkeypatch):
 
     assert rc == 0
     assert captured["cmd"][:3] == ("opencode", "run", "--dangerously-skip-permissions")
+
+
+@pytest.mark.asyncio
+async def test_codexapp_prompts_and_quits_existing_app_before_launch(monkeypatch):
+    captured: dict = {}
+    quit_called = False
+
+    class FakeProc:
+        returncode = None
+        pid = 12345
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+        def terminate(self) -> None:
+            self.returncode = 143
+
+        def kill(self) -> None:
+            self.returncode = 137
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        captured["cmd"] = cmd
+        return FakeProc()
+
+    def fake_quit_codex_app() -> bool:
+        nonlocal quit_called
+        quit_called = True
+        return True
+
+    monkeypatch.setattr("claude_tap.runner.shutil.which", lambda _cmd: CODEX_APP_CLIENT.cmd)
+    monkeypatch.setattr("claude_tap.runner._find_processes_by_command", lambda _cmd: [24680])
+    monkeypatch.setattr("claude_tap.runner._quit_codex_app", fake_quit_codex_app)
+    monkeypatch.setattr("claude_tap.runner._wait_for_processes_to_exit", lambda _cmd: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+    monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    rc = await run_client(
+        client=CODEX_APP_CLIENT,
+        proxy_port=1234,
+        proxy_host="127.0.0.1",
+        forward_args=[],
+        proxy_mode="forward",
+        yolo=False,
+    )
+
+    assert rc == 0
+    assert quit_called is True
+    assert captured["cmd"] == (CODEX_APP_CLIENT.cmd,)
+
+
+@pytest.mark.asyncio
+async def test_codexapp_declining_existing_app_quit_aborts_launch(monkeypatch):
+    launched = False
+
+    async def fake_create_subprocess_exec(*_cmd, **_kwargs):
+        nonlocal launched
+        launched = True
+        raise AssertionError("Codex App should not launch when the existing instance is left running")
+
+    monkeypatch.setattr("claude_tap.runner.shutil.which", lambda _cmd: CODEX_APP_CLIENT.cmd)
+    monkeypatch.setattr("claude_tap.runner._find_processes_by_command", lambda _cmd: [24680])
+    monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+    monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    rc = await run_client(
+        client=CODEX_APP_CLIENT,
+        proxy_port=1234,
+        proxy_host="127.0.0.1",
+        forward_args=[],
+        proxy_mode="forward",
+        yolo=False,
+    )
+
+    assert rc == 1
+    assert launched is False
 
 
 def test_export_prompt_from_trace_creates_parent_directory(tmp_path):
