@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 
 from claude_tap import protocols
-from claude_tap.protocols import ANTHROPIC, GEMINI, OPENAI
+from claude_tap.protocols import ANTHROPIC, CODEX_APP, GEMINI, OPENAI
 
 
 def test_registry_has_known_protocols():
     names = protocols.names()
-    assert names == ["anthropic", "gemini", "openai", "passthrough"]
+    assert names == ["anthropic", "codexapp", "gemini", "openai", "passthrough"]
 
 
 def test_registry_get_unknown_raises():
@@ -35,6 +35,15 @@ def test_openai_matches_both_with_and_without_v1():
     assert OPENAI.matches("/v1/responses")
     assert OPENAI.matches("/responses")
     assert OPENAI.matches("/v1/chat/completions")
+
+
+def test_codexapp_relays_all_but_captures_only_response_posts():
+    assert CODEX_APP.matches("/backend-api/wham/remote/control/server")
+    assert CODEX_APP.matches("/backend-api/codex/analytics-events/events")
+    assert CODEX_APP.matches("/backend-api/codex/responses")
+    assert CODEX_APP.captures("POST", "/backend-api/codex/responses")
+    assert not CODEX_APP.captures("GET", "/backend-api/codex/responses")
+    assert not CODEX_APP.captures("POST", "/backend-api/codex/analytics-events/events")
 
 
 def test_gemini_matches_versioned_paths():
@@ -93,6 +102,13 @@ def test_openai_strips_v1_for_chatgpt_oauth_target():
 def test_openai_strip_handles_root():
     """Stripping must not return an empty path."""
     assert OPENAI.rewrite_upstream_path("/v1", "https://chatgpt.com/backend-api/codex") == "/"
+
+
+def test_codexapp_reverse_target_strips_backend_prefix_when_needed():
+    assert (
+        CODEX_APP.rewrite_upstream_path("/backend-api/codex/responses", "https://chatgpt.com/backend-api/codex")
+        == "/responses"
+    )
 
 
 # --- usage extraction -----------------------------------------------------

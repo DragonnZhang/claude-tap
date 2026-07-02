@@ -16,6 +16,7 @@ This test pins down two contracts:
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import socket
 import ssl
@@ -28,7 +29,7 @@ from aiohttp import web
 from claude_tap.certs import CertificateAuthority, ensure_ca
 from claude_tap.forward_proxy import ForwardProxyServer
 from claude_tap.pipeline import ProxyContext
-from claude_tap.protocols import ANTHROPIC
+from claude_tap.protocols import ANTHROPIC, CODEX_APP
 from claude_tap.trace import EventBus, JsonlSink
 
 pytestmark = pytest.mark.asyncio
@@ -256,6 +257,120 @@ async def test_forward_proxy_capture_only_records_without_upstream(trace_dir: Pa
     record = json.loads(lines[0])
     assert record["request"]["body"]["system"] == "system text"
     assert record["response"]["body"]["id"] == "msg_claude_tap_capture"
+
+
+async def test_forward_proxy_codexapp_relays_noise_and_records_responses(trace_dir: Path):
+    cert_path, key_path = ensure_ca()
+    ca = CertificateAuthority(cert_path, key_path)
+    fake_host = "chatgpt.example.test"
+    received: list[dict] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        body = await request.read()
+        received.append({"path": request.path, "body": body, "encoding": request.headers.get("Content-Encoding", "")})
+        if request.path != "/backend-api/codex/responses":
+            return web.json_response({"ok": True})
+
+        resp = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+        )
+        await resp.prepare(request)
+        for chunk in [
+            b'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_app","output":[]}}\n\n',
+            b'event: response.output_item.done\ndata: {"type":"response.output_item.done","item":{"type":"function_call","name":"shell"}}\n\n',
+            b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_app","output":[],"usage":{"input_tokens":7,"output_tokens":3}}}\n\n',
+        ]:
+            await resp.write(chunk)
+        await resp.write_eof()
+        return resp
+
+    upstream_app = web.Application(client_max_size=0)
+    upstream_app.router.add_route("*", "/{path_info:.*}", handler)
+
+    cert_pem, key_pem = ca.get_host_pem(fake_host)
+    cp = Path(f"/tmp/_fwdtest_{fake_host}.pem")
+    kp = Path(f"/tmp/_fwdtest_{fake_host}.key")
+    cp.write_bytes(cert_pem)
+    kp.write_bytes(key_pem)
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.load_cert_chain(str(cp), str(kp))
+    cp.unlink(missing_ok=True)
+    kp.unlink(missing_ok=True)
+
+    runner = web.AppRunner(upstream_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0, ssl_context=ssl_ctx)
+    await site.start()
+    upstream_port = site._server.sockets[0].getsockname()[1]
+
+    class FakeResolver(aiohttp.abc.AbstractResolver):
+        async def resolve(self, host: str, port: int = 0, family: int = socket.AF_INET):
+            if host == fake_host:
+                return [
+                    {
+                        "hostname": host,
+                        "host": "127.0.0.1",
+                        "port": upstream_port,
+                        "family": socket.AF_INET,
+                        "proto": 0,
+                        "flags": 0,
+                    }
+                ]
+            return []
+
+        async def close(self) -> None:
+            pass
+
+    out_ssl = ssl.create_default_context(cafile=str(cert_path))
+    connector = aiohttp.TCPConnector(resolver=FakeResolver(), ssl=out_ssl)
+    session = aiohttp.ClientSession(connector=connector, auto_decompress=False)
+
+    bus = EventBus()
+    jsonl_path = trace_dir / "trace.jsonl"
+    bus.subscribe(JsonlSink(jsonl_path))
+    ctx = ProxyContext(protocols=(CODEX_APP,), target="https://chatgpt.com", bus=bus, session=session)
+    proxy, proxy_port = await _start_proxy(ctx, ca)
+
+    try:
+        client_ssl = ssl.create_default_context(cafile=str(cert_path))
+        client_connector = aiohttp.TCPConnector(ssl=client_ssl)
+        async with aiohttp.ClientSession(connector=client_connector) as client:
+            async with client.get(
+                f"https://{fake_host}/backend-api/wham/remote/control/server",
+                proxy=f"http://127.0.0.1:{proxy_port}",
+            ) as resp:
+                assert resp.status == 200
+                assert await resp.json() == {"ok": True}
+
+            payload = gzip.compress(b'{"model":"gpt-5.4-mini","stream":true,"input":[{"role":"user","content":"hi"}]}')
+            async with client.post(
+                f"https://{fake_host}/backend-api/codex/responses",
+                data=payload,
+                headers={"Content-Encoding": "gzip", "Content-Type": "application/json"},
+                proxy=f"http://127.0.0.1:{proxy_port}",
+            ) as resp:
+                assert resp.status == 200
+                assert "response.completed" in await resp.text()
+    finally:
+        await session.close()
+        await proxy.stop()
+        await runner.cleanup()
+        await bus.close_all()
+
+    assert [r["path"] for r in received] == [
+        "/backend-api/wham/remote/control/server",
+        "/backend-api/codex/responses",
+    ]
+
+    lines = jsonl_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["request"]["path"] == "/backend-api/codex/responses"
+    assert record["request"]["body"]["model"] == "gpt-5.4-mini"
+    assert record["response"]["body"]["id"] == "resp_app"
+    assert record["response"]["body"]["output"][0]["name"] == "shell"
+    assert len(record["response"]["sse_events"]) == 3
 
 
 async def test_forward_proxy_streams_and_reassembles(trace_dir: Path):

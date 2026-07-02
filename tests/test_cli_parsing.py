@@ -87,6 +87,8 @@ def test_run_with_gemini_and_opencode(parser):
     assert args.client == "gemini"
     args = parser.parse_args(["run", "opencode"])
     assert args.client == "opencode"
+    args = parser.parse_args(["run", "codexapp"])
+    assert args.client == "codexapp"
 
 
 def test_run_short_options_work(parser):
@@ -293,10 +295,11 @@ def test_resolve_config_driven_clients_force_forward_mode(fake_home: Path):
 
     opencode/pi/kimi/iflow/hermes honor a config-file ``baseURL`` over env
     vars. Devin is single-backend, but its rustls binary does not honor our
-    env redirect. Reverse mode would silently capture nothing for these
-    clients.
+    env redirect. Codex.app launches its API sidecar from Electron, so
+    reverse-mode CLI config overrides do not reach the request process.
+    Reverse mode would silently capture nothing for these clients.
     """
-    for name in ("opencode", "pi", "kimi", "iflow", "hermes", "devin"):
+    for name in ("opencode", "pi", "kimi", "iflow", "hermes", "devin", "codexapp"):
         client = clients_mod.get(name)
         _, _, mode = resolve_target_and_mode(
             client=client,

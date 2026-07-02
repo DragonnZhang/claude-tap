@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Literal
 
-from claude_tap.protocols import ANTHROPIC, GEMINI, OPENAI, PASSTHROUGH, Protocol
+from claude_tap.protocols import ANTHROPIC, CODEX_APP, GEMINI, OPENAI, PASSTHROUGH, Protocol
 
 LAUNCH_CLEANUP_PATH_ENV = "__CLAUDE_TAP_CLEANUP_PATH__"
 
@@ -98,6 +98,8 @@ class Client:
 
     pre_launch_env_purge: tuple[str, ...] = ()
     detect_auth: Callable[[], AuthInfo] = field(default=_no_auth)
+    suppress_child_output: bool = False
+    warn_on_missing_yolo: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -993,6 +995,22 @@ CODEX = Client(
 )
 
 
+CODEX_APP_CLIENT = Client(
+    name="codexapp",
+    cmd="/Applications/Codex.app/Contents/MacOS/Codex",
+    label="Codex App",
+    install_url="/Applications/Codex.app",
+    protocols=(CODEX_APP,),
+    # The Electron shell spawns the Rust app-server sidecar, which inherits
+    # standard HTTPS_PROXY and CA env vars. Reverse-mode config overrides do
+    # not reach that child process, so Codex.app must use forward mode.
+    env_redirect_reliable=False,
+    detect_auth=_codex_auth,
+    suppress_child_output=True,
+    warn_on_missing_yolo=False,
+)
+
+
 GEMINI_CLI = Client(
     name="gemini",
     cmd="gemini",
@@ -1148,7 +1166,22 @@ OPENCLAW = Client(
 
 
 _REGISTRY: dict[str, Client] = {
-    c.name: c for c in (CLAUDE, CODEX, GEMINI_CLI, OPENCODE, PI, KIMI, IFLOW, CURSOR, QODER, DEVIN, HERMES, OPENCLAW)
+    c.name: c
+    for c in (
+        CLAUDE,
+        CODEX,
+        CODEX_APP_CLIENT,
+        GEMINI_CLI,
+        OPENCODE,
+        PI,
+        KIMI,
+        IFLOW,
+        CURSOR,
+        QODER,
+        DEVIN,
+        HERMES,
+        OPENCLAW,
+    )
 }
 
 

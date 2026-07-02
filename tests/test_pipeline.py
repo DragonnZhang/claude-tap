@@ -7,6 +7,9 @@ from __future__ import annotations
 import gzip
 import zlib
 
+import pytest
+
+from claude_tap import pipeline
 from claude_tap.pipeline import (
     HOP_BY_HOP,
     build_http_record,
@@ -15,6 +18,7 @@ from claude_tap.pipeline import (
     filter_headers,
     maybe_decompress,
     parse_json_body,
+    reassemble_event_stream_body,
 )
 from claude_tap.protocols import ANTHROPIC, OPENAI
 
@@ -90,6 +94,13 @@ def test_decompress_deflate():
     assert maybe_decompress(zlib.compress(b"abcd"), "deflate") == b"abcd"
 
 
+def test_decompress_zstd():
+    if pipeline.zstd is None:
+        pytest.skip("backports-zstd is not installed in this test environment")
+    zstd = pipeline.zstd
+    assert maybe_decompress(zstd.compress(b'{"model":"gpt-test"}'), "zstd") == b'{"model":"gpt-test"}'
+
+
 def test_decompress_identity_passthrough():
     assert maybe_decompress(b"raw", "") == b"raw"
     assert maybe_decompress(b"raw", "br") == b"raw"
@@ -98,6 +109,19 @@ def test_decompress_identity_passthrough():
 def test_decompress_corrupt_returns_input():
     """Corrupt gzip must not raise — we fall back to raw bytes."""
     assert maybe_decompress(b"not a gzip", "gzip") == b"not a gzip"
+
+
+def test_reassemble_event_stream_body_openai_responses():
+    body = (
+        b'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","output":[]}}\n\n'
+        b'event: response.output_item.done\ndata: {"type":"response.output_item.done","item":{"type":"function_call","name":"Read"}}\n\n'
+        b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","output":[],"usage":{"input_tokens":3,"output_tokens":2}}}\n\n'
+    )
+    snapshot, events = reassemble_event_stream_body(OPENAI, body)
+    assert len(events) == 3
+    assert snapshot["id"] == "resp_1"
+    assert snapshot["usage"]["input_tokens"] == 3
+    assert snapshot["output"][0]["name"] == "Read"
 
 
 # --- build_record ----------------------------------------------------------

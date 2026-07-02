@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +42,7 @@ def _install_forward_proxy_env(env: dict[str, str], proxy_url: str, ca_cert_path
         ca = str(ca_cert_path)
         env["NODE_EXTRA_CA_CERTS"] = ca
         env["SSL_CERT_FILE"] = ca
+        env["CODEX_CA_CERTIFICATE"] = ca
         env["REQUESTS_CA_BUNDLE"] = ca
 
 
@@ -139,7 +141,7 @@ async def run_client(
                 # Default to leading flags so user-supplied args can override
                 # later when the child CLI resolves conflicts by last value.
                 cmd_args = yolo_args + cmd_args
-        else:
+        elif client.warn_on_missing_yolo:
             sys.stdout.write(
                 f"[claude-tap] note: {client.label} has no single-flag yolo mode; "
                 f"approve actions in-session or pass --no-yolo to silence this.\n"
@@ -151,6 +153,8 @@ async def run_client(
         sys.stdout.write(f"[claude-tap] HTTPS_PROXY={proxy_url}\n")
         if ca_cert_path:
             sys.stdout.write(f"[claude-tap] NODE_EXTRA_CA_CERTS={ca_cert_path}\n")
+            if client.name == "codexapp":
+                sys.stdout.write(f"[claude-tap] CODEX_CA_CERTIFICATE={ca_cert_path}\n")
     else:
         for key, value in redirect_env.items():
             sys.stdout.write(f"[claude-tap] {key}={value}\n")
@@ -158,15 +162,20 @@ async def run_client(
             sys.stdout.write(f"[claude-tap] cli args: {' '.join(redirect_args)}\n")
     if yolo_args:
         sys.stdout.write(f"[claude-tap] yolo: {' '.join(yolo_args)}  (default; use --no-yolo to disable)\n")
+    if client.suppress_child_output:
+        sys.stdout.write(
+            f"[claude-tap] {client.label} stdout/stderr suppressed; proxy trace still records API traffic\n"
+        )
     sys.stdout.flush()
 
-    use_fg = hasattr(os, "tcsetpgrp") and sys.stdin.isatty()
+    use_fg = hasattr(os, "tcsetpgrp") and sys.stdin.isatty() and not client.suppress_child_output
+    child_output = subprocess.DEVNULL if client.suppress_child_output else None
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         env=env,
         stdin=None,
-        stdout=None,
-        stderr=None,
+        stdout=child_output,
+        stderr=child_output,
         **({"process_group": 0} if use_fg else {}),
     )
     if use_fg:
@@ -226,6 +235,12 @@ async def run_client(
             loop.remove_signal_handler(sig)
         except (NotImplementedError, OSError):
             pass
+
+    interrupted_codes = {-signal.SIGINT, -signal.SIGTERM}
+    if sigint_count and code in interrupted_codes:
+        sys.stdout.write(f"\n[claude-tap] {client.label} stopped\n")
+        sys.stdout.flush()
+        return 0
 
     sys.stdout.write(f"\n[claude-tap] {client.label} exited with code {code}\n")
     sys.stdout.flush()

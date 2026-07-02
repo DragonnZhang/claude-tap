@@ -44,6 +44,7 @@ def test_registry_lists_known_clients():
     assert sorted(clients.names()) == [
         "claude",
         "codex",
+        "codexapp",
         "cursor",
         "devin",
         "gemini",
@@ -200,6 +201,7 @@ def test_openclaw_env_writes_temp_config_for_active_provider(fake_home: Path):
 def test_single_protocol_clients():
     assert [p.name for p in clients.get("claude").protocols] == ["anthropic"]
     assert [p.name for p in clients.get("codex").protocols] == ["openai"]
+    assert [p.name for p in clients.get("codexapp").protocols] == ["codexapp"]
     assert [p.name for p in clients.get("gemini").protocols] == ["gemini"]
 
 
@@ -216,6 +218,7 @@ def test_yolo_args_match_each_cli_published_flag():
     expected = {
         "claude": ("--dangerously-skip-permissions",),
         "codex": ("--dangerously-bypass-approvals-and-sandbox",),
+        "codexapp": (),
         "gemini": ("--yolo",),
         "opencode": ("--dangerously-skip-permissions",),
         "kimi": ("--yolo",),
@@ -236,6 +239,14 @@ def test_proprietary_clients_use_passthrough_protocol():
 
     for name in ("cursor", "qoder", "devin"):
         assert clients.get(name).protocols == (PASSTHROUGH,)
+
+
+def test_codexapp_launches_bundle_executable_in_forward_mode():
+    c = clients.get("codexapp")
+    assert c.cmd == "/Applications/Codex.app/Contents/MacOS/Codex"
+    assert c.env_redirect_reliable is False
+    assert c.suppress_child_output is True
+    assert c.warn_on_missing_yolo is False
 
 
 def test_passthrough_protocol_accepts_any_path():

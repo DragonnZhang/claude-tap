@@ -55,6 +55,12 @@ class Protocol:
     # list, we just don't produce a structured snapshot.
     accepts_all_paths: bool = False
 
+    # Optional narrower capture filter. Some clients (notably Codex.app)
+    # need every request relayed through the proxy, but only the model API
+    # requests are useful enough to write to the trace.
+    capture_paths: tuple[str, ...] | None = None
+    capture_methods: tuple[str, ...] | None = None
+
     # Streaming detection — most protocols use ``body.stream``; Gemini uses
     # the URL verb instead, so we override per-protocol.
     is_streaming: Callable[[str, object], bool] = field(default=_default_is_streaming)
@@ -73,8 +79,19 @@ class Protocol:
     def matches(self, path: str) -> bool:
         if self.accepts_all_paths:
             return True
-        clean = path.split("?", 1)[0].rstrip("/")
-        return any(clean == p or clean.startswith(p + "/") for p in self.allowed_paths)
+        return _path_matches(path, self.allowed_paths)
+
+    def captures(self, method: str, path: str) -> bool:
+        if self.capture_methods is not None and method.upper() not in self.capture_methods:
+            return False
+        if self.capture_paths is None:
+            return self.matches(path)
+        return _path_matches(path, self.capture_paths)
+
+
+def _path_matches(path: str, allowed_paths: tuple[str, ...]) -> bool:
+    clean = path.split("?", 1)[0].rstrip("/")
+    return any(clean == p or clean.startswith(p + "/") for p in allowed_paths)
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +102,13 @@ class Protocol:
 def _gemini_is_streaming(path: str, body: object) -> bool:
     # Gemini encodes streaming in the URL, not the body.
     return ":streamGenerateContent" in path or "alt=sse" in path
+
+
+def _codex_app_is_streaming(path: str, body: object) -> bool:
+    # Codex.app posts to the ChatGPT Codex backend with text/event-stream
+    # responses. The body may be zstd-encoded, so path alone is the stable
+    # streaming signal.
+    return path.split("?", 1)[0].rstrip("/") == "/backend-api/codex/responses"
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +126,15 @@ def _openai_rewrite_upstream_path(path: str, target: str) -> str:
         return path
     if path.startswith("/v1"):
         rest = path[len("/v1") :] or "/"
+        return rest
+    return path
+
+
+def _codex_app_rewrite_upstream_path(path: str, target: str) -> str:
+    """Keep Codex.app reverse-mode paths usable with either target shape."""
+
+    if "chatgpt.com/backend-api/codex" in target and path.startswith("/backend-api/codex"):
+        rest = path[len("/backend-api/codex") :] or "/"
         return rest
     return path
 
@@ -211,6 +244,20 @@ GEMINI = Protocol(
 )
 
 
+CODEX_APP = Protocol(
+    name="codexapp",
+    default_target="https://chatgpt.com",
+    allowed_paths=(),
+    accepts_all_paths=True,
+    capture_paths=("/backend-api/codex/responses",),
+    capture_methods=("POST",),
+    is_streaming=_codex_app_is_streaming,
+    rewrite_upstream_path=_codex_app_rewrite_upstream_path,
+    make_reassembler=OpenAIReassembler,
+    extract_usage=_openai_usage,
+)
+
+
 # For clients whose SSE protocol we don't natively understand (Cursor's
 # proprietary RPC, Qoder's, Devin's). We accept every path so the proxy can
 # transparently relay bytes. The reassembler only collects the raw event
@@ -225,7 +272,7 @@ PASSTHROUGH = Protocol(
 )
 
 
-_REGISTRY: dict[str, Protocol] = {p.name: p for p in (ANTHROPIC, OPENAI, GEMINI, PASSTHROUGH)}
+_REGISTRY: dict[str, Protocol] = {p.name: p for p in (ANTHROPIC, CODEX_APP, OPENAI, GEMINI, PASSTHROUGH)}
 
 
 def get(name: str) -> Protocol:
