@@ -119,6 +119,18 @@ def test_extract_metadata_handles_garbage():
     assert extract_metadata("not json") is None
 
 
+def test_extract_metadata_handles_non_json_request_body():
+    record = {
+        "turn": 1,
+        "request": {"method": "POST", "path": "/backend-api/codex/responses", "headers": {}, "body": "zstd bytes"},
+        "response": {"status": 200, "headers": {}, "body": "event: response.created\n"},
+    }
+    meta = extract_metadata(json.dumps(record))
+    assert meta is not None
+    assert meta["path"] == "/backend-api/codex/responses"
+    assert meta["model"] == ""
+
+
 def test_render_strips_sse_events_by_default(trace_dir: Path):
     """The HTML viewer doesn't need per-chunk events; default to stripping
     them so a long trace doesn't blow up the file."""

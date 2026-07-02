@@ -28,6 +28,7 @@ from claude_tap.pipeline import (
     filter_headers,
     maybe_decompress,
     parse_json_body,
+    reassemble_event_stream_body,
 )
 from claude_tap.pipeline import (
     build_http_record as _build_http_record,
@@ -91,22 +92,27 @@ async def _handle_http(
 
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     t0 = time.monotonic()
-    turn = ctx.next_turn()
-    req_body = parse_json_body(body)
+    should_capture = protocol.captures(request.method, request.path_qs)
+    turn = ctx.next_turn() if should_capture else 0
+    decoded_req_body = maybe_decompress(body, request.headers.get("Content-Encoding", ""))
+    req_body = parse_json_body(decoded_req_body)
     streaming = protocol.is_streaming(request.path_qs, req_body)
     model = req_body.get("model", "") if isinstance(req_body, dict) else ""
-    log.info(
-        "[Turn %d] -> %s %s (%s) model=%s stream=%s upstream=%s",
-        turn,
-        request.method,
-        request.path,
-        protocol.name,
-        model,
-        streaming,
-        upstream_url,
-    )
+    if should_capture:
+        log.info(
+            "[Turn %d] -> %s %s (%s) model=%s stream=%s upstream=%s",
+            turn,
+            request.method,
+            request.path,
+            protocol.name,
+            model,
+            streaming,
+            upstream_url,
+        )
+    else:
+        log.debug("relay-only -> %s %s (%s) upstream=%s", request.method, request.path, protocol.name, upstream_url)
 
-    if ctx.capture_only:
+    if ctx.capture_only and should_capture:
         resp_body = capture_only_response(protocol, request.path_qs, req_body)
         duration_ms = int((time.monotonic() - t0) * 1000)
         record = _build_http_record(
@@ -135,27 +141,30 @@ async def _handle_http(
             timeout=aiohttp.ClientTimeout(total=600, sock_read=300),
         )
     except Exception as exc:
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        record = _build_http_record(
-            request_id=request_id,
-            turn=turn,
-            duration_ms=duration_ms,
-            method=request.method,
-            path=request.path_qs,
-            req_headers=request.headers,
-            req_body=req_body,
-            status=502,
-            resp_headers={},
-            resp_body={"error": str(exc), "upstream": upstream_url},
-            upstream_base_url=ctx.target,
-        )
-        await ctx.bus.publish(record)
+        if should_capture:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            record = _build_http_record(
+                request_id=request_id,
+                turn=turn,
+                duration_ms=duration_ms,
+                method=request.method,
+                path=request.path_qs,
+                req_headers=request.headers,
+                req_body=req_body,
+                status=502,
+                resp_headers={},
+                resp_body={"error": str(exc), "upstream": upstream_url},
+                upstream_base_url=ctx.target,
+            )
+            await ctx.bus.publish(record)
         log.error("[Turn %d] upstream error %s: %s", turn, upstream_url, exc)
         return web.Response(status=502, text=str(exc))
 
     if streaming and upstream_resp.status == 200:
-        return await _proxy_stream(request, upstream_resp, ctx, protocol, request_id, turn, t0, req_body)
-    return await _proxy_buffered(request, upstream_resp, ctx, request_id, turn, t0, req_body)
+        return await _proxy_stream(
+            request, upstream_resp, ctx, protocol, request_id, turn, t0, req_body, should_capture
+        )
+    return await _proxy_buffered(request, upstream_resp, ctx, protocol, request_id, turn, t0, req_body, should_capture)
 
 
 async def _proxy_stream(
@@ -167,6 +176,7 @@ async def _proxy_stream(
     turn: int,
     t0: float,
     req_body: object,
+    should_capture: bool,
 ) -> web.StreamResponse:
     resp = web.StreamResponse(
         status=upstream_resp.status,
@@ -174,12 +184,13 @@ async def _proxy_stream(
     )
     await resp.prepare(request)
 
-    reassembler = protocol.make_reassembler()
+    reassembler = protocol.make_reassembler() if should_capture else None
 
     try:
         async for chunk in upstream_resp.content.iter_any():
             await resp.write(chunk)
-            reassembler.feed_bytes(chunk)
+            if reassembler is not None:
+                reassembler.feed_bytes(chunk)
     except (ConnectionError, asyncio.CancelledError):
         pass
     try:
@@ -187,23 +198,24 @@ async def _proxy_stream(
     except Exception:
         pass
 
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    snapshot = reassembler.reconstruct()
-    record = _build_http_record(
-        request_id=request_id,
-        turn=turn,
-        duration_ms=duration_ms,
-        method=request.method,
-        path=request.path_qs,
-        req_headers=request.headers,
-        req_body=req_body,
-        status=upstream_resp.status,
-        resp_headers=upstream_resp.headers,
-        resp_body=snapshot,
-        sse_events=reassembler.events,
-        upstream_base_url=ctx.target,
-    )
-    await ctx.bus.publish(record)
+    if reassembler is not None:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        snapshot = reassembler.reconstruct()
+        record = _build_http_record(
+            request_id=request_id,
+            turn=turn,
+            duration_ms=duration_ms,
+            method=request.method,
+            path=request.path_qs,
+            req_headers=request.headers,
+            req_body=req_body,
+            status=upstream_resp.status,
+            resp_headers=upstream_resp.headers,
+            resp_body=snapshot,
+            sse_events=reassembler.events,
+            upstream_base_url=ctx.target,
+        )
+        await ctx.bus.publish(record)
     return resp
 
 
@@ -211,30 +223,39 @@ async def _proxy_buffered(
     request: web.Request,
     upstream_resp: aiohttp.ClientResponse,
     ctx: ProxyContext,
+    protocol: Protocol,
     request_id: str,
     turn: int,
     t0: float,
     req_body: object,
+    should_capture: bool,
 ) -> web.Response:
     resp_bytes = await upstream_resp.read()
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    decoded = maybe_decompress(resp_bytes, upstream_resp.headers.get("Content-Encoding", ""))
-    resp_body = parse_json_body(decoded)
+    if should_capture:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        decoded = maybe_decompress(resp_bytes, upstream_resp.headers.get("Content-Encoding", ""))
+        content_type = upstream_resp.headers.get("Content-Type", "")
+        if "text/event-stream" in content_type.lower():
+            resp_body, sse_events = reassemble_event_stream_body(protocol, decoded)
+        else:
+            resp_body = parse_json_body(decoded)
+            sse_events = None
 
-    record = _build_http_record(
-        request_id=request_id,
-        turn=turn,
-        duration_ms=duration_ms,
-        method=request.method,
-        path=request.path_qs,
-        req_headers=request.headers,
-        req_body=req_body,
-        status=upstream_resp.status,
-        resp_headers=upstream_resp.headers,
-        resp_body=resp_body,
-        upstream_base_url=ctx.target,
-    )
-    await ctx.bus.publish(record)
+        record = _build_http_record(
+            request_id=request_id,
+            turn=turn,
+            duration_ms=duration_ms,
+            method=request.method,
+            path=request.path_qs,
+            req_headers=request.headers,
+            req_body=req_body,
+            status=upstream_resp.status,
+            resp_headers=upstream_resp.headers,
+            resp_body=resp_body,
+            sse_events=sse_events,
+            upstream_base_url=ctx.target,
+        )
+        await ctx.bus.publish(record)
 
     return web.Response(
         status=upstream_resp.status,
@@ -287,7 +308,8 @@ async def _handle_websocket(
 
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     t0 = time.monotonic()
-    turn = ctx.next_turn()
+    should_capture = protocol.captures(request.method, request.path_qs)
+    turn = ctx.next_turn() if should_capture else 0
 
     connect_kwargs: dict[str, object] = {}
     proxy_settings = _resolve_ws_proxy(upstream_ws) if ctx.session.trust_env else None
@@ -297,7 +319,10 @@ async def _handle_websocket(
         if proxy_auth is not None:
             connect_kwargs["proxy_auth"] = proxy_auth
 
-    log.info("[Turn %d] -> WS UPGRADE %s upstream=%s", turn, request.path_qs, upstream_ws)
+    if should_capture:
+        log.info("[Turn %d] -> WS UPGRADE %s upstream=%s", turn, request.path_qs, upstream_ws)
+    else:
+        log.debug("relay-only -> WS UPGRADE %s upstream=%s", request.path_qs, upstream_ws)
 
     try:
         upstream = await ctx.session.ws_connect(
@@ -307,19 +332,20 @@ async def _handle_websocket(
             **connect_kwargs,
         )
     except Exception as exc:
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        record = _build_ws_record(
-            request_id=request_id,
-            turn=turn,
-            duration_ms=duration_ms,
-            path=request.path_qs,
-            req_headers=request.headers,
-            client_messages=[],
-            server_messages=[],
-            upstream_base_url=ctx.target,
-            error=str(exc),
-        )
-        await ctx.bus.publish(record)
+        if should_capture:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            record = _build_ws_record(
+                request_id=request_id,
+                turn=turn,
+                duration_ms=duration_ms,
+                path=request.path_qs,
+                req_headers=request.headers,
+                client_messages=[],
+                server_messages=[],
+                upstream_base_url=ctx.target,
+                error=str(exc),
+            )
+            await ctx.bus.publish(record)
         return web.Response(status=502, text=str(exc))
 
     client_ws = web.WebSocketResponse(protocols=sub_protocols)
@@ -337,6 +363,8 @@ async def _handle_websocket(
 
     async def _publish_turn(error: str | None = None) -> None:
         nonlocal client_msgs, server_msgs, turn_started_at, turn_request_id, turn_index
+        if not should_capture:
+            return
         if not client_msgs and not server_msgs and not error:
             return
         # Atomically swap the buffers BEFORE the awaited publish. Otherwise
@@ -369,7 +397,8 @@ async def _handle_websocket(
         try:
             async for msg in client_ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
-                    client_msgs.append(msg.data)
+                    if should_capture:
+                        client_msgs.append(msg.data)
                     await upstream.send_str(msg.data)
                 elif msg.type == aiohttp.WSMsgType.BINARY:
                     await upstream.send_bytes(msg.data)
@@ -387,9 +416,10 @@ async def _handle_websocket(
         try:
             async for msg in upstream:
                 if msg.type == aiohttp.WSMsgType.TEXT:
-                    server_msgs.append(msg.data)
+                    if should_capture:
+                        server_msgs.append(msg.data)
                     await client_ws.send_str(msg.data)
-                    if _is_turn_terminal_event(msg.data):
+                    if should_capture and _is_turn_terminal_event(msg.data):
                         await _publish_turn()
                 elif msg.type == aiohttp.WSMsgType.BINARY:
                     await client_ws.send_bytes(msg.data)

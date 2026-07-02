@@ -189,10 +189,14 @@ def extract_metadata(record_json: str) -> dict | None:
     except (json.JSONDecodeError, TypeError):
         return None
 
-    req = r.get("request") or {}
-    body = req.get("body") or {}
-    resp = r.get("response") or {}
-    resp_body = resp.get("body") or {}
+    req_raw = r.get("request") or {}
+    req = req_raw if isinstance(req_raw, dict) else {}
+    body_raw = req.get("body") or {}
+    body = body_raw if isinstance(body_raw, dict) else {}
+    resp_raw = r.get("response") or {}
+    resp = resp_raw if isinstance(resp_raw, dict) else {}
+    resp_body_raw = resp.get("body") or {}
+    resp_body = resp_body_raw if isinstance(resp_body_raw, dict) else {}
     stream_events = _iter_response_events(resp)
 
     usage = resp_body.get("usage") if isinstance(resp_body, dict) else None

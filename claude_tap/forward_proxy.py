@@ -28,6 +28,7 @@ from claude_tap.pipeline import (
     filter_headers,
     maybe_decompress,
     parse_json_body,
+    reassemble_event_stream_body,
 )
 from claude_tap.protocols import Protocol
 
@@ -232,13 +233,20 @@ class ForwardProxyServer:
         ctx = self._ctx
         request_id = f"req_{uuid.uuid4().hex[:12]}"
         t0 = time.monotonic()
-        turn = ctx.next_turn()
-        req_body = parse_json_body(body)
+        should_capture = protocol.captures(method, path)
+        turn = ctx.next_turn() if should_capture else 0
+        decoded_req_body = maybe_decompress(
+            body, headers.get("Content-Encoding", "") or headers.get("content-encoding", "")
+        )
+        req_body = parse_json_body(decoded_req_body)
         streaming = protocol.is_streaming(path, req_body)
         model = req_body.get("model", "") if isinstance(req_body, dict) else ""
-        log.info("[Turn %d] -> %s %s (%s) model=%s stream=%s", turn, method, path, protocol.name, model, streaming)
+        if should_capture:
+            log.info("[Turn %d] -> %s %s (%s) model=%s stream=%s", turn, method, path, protocol.name, model, streaming)
+        else:
+            log.debug("relay-only -> %s %s (%s)", method, path, protocol.name)
 
-        if ctx.capture_only:
+        if ctx.capture_only and should_capture:
             resp_body = capture_only_response(protocol, path, req_body)
             duration_ms = int((time.monotonic() - t0) * 1000)
             record = build_http_record(
@@ -288,11 +296,33 @@ class ForwardProxyServer:
 
         if streaming and resp.status == 200:
             await self._stream_back(
-                resp, client_writer, request_id, turn, t0, method, path, headers, req_body, protocol, upstream_base
+                resp,
+                client_writer,
+                request_id,
+                turn,
+                t0,
+                method,
+                path,
+                headers,
+                req_body,
+                protocol,
+                upstream_base,
+                should_capture,
             )
         else:
             await self._buffered_back(
-                resp, client_writer, request_id, turn, t0, method, path, headers, req_body, upstream_base
+                resp,
+                client_writer,
+                request_id,
+                turn,
+                t0,
+                method,
+                path,
+                headers,
+                req_body,
+                protocol,
+                upstream_base,
+                should_capture,
             )
 
     async def _stream_back(
@@ -308,8 +338,8 @@ class ForwardProxyServer:
         req_body: object,
         protocol: Protocol,
         upstream_base: str,
+        should_capture: bool,
     ) -> None:
-        ctx = self._ctx
         writer.write(f"HTTP/1.1 {upstream.status} {upstream.reason or ''}\r\n".encode())
         for k, v in upstream.headers.items():
             if k.lower() not in HOP_BY_HOP:
@@ -317,13 +347,14 @@ class ForwardProxyServer:
         writer.write(b"Transfer-Encoding: chunked\r\n\r\n")
         await writer.drain()
 
-        reassembler = protocol.make_reassembler()
+        reassembler = protocol.make_reassembler() if should_capture else None
 
         try:
             async for chunk in upstream.content.iter_any():
                 writer.write(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
                 await writer.drain()
-                reassembler.feed_bytes(chunk)
+                if reassembler is not None:
+                    reassembler.feed_bytes(chunk)
         except (ConnectionError, asyncio.CancelledError):
             pass
 
@@ -333,22 +364,23 @@ class ForwardProxyServer:
         except Exception:
             pass
 
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        record = build_http_record(
-            request_id=request_id,
-            turn=turn,
-            duration_ms=duration_ms,
-            method=method,
-            path=path,
-            req_headers=req_headers,
-            req_body=req_body,
-            status=upstream.status,
-            resp_headers=dict(upstream.headers),
-            resp_body=reassembler.reconstruct(),
-            sse_events=reassembler.events,
-            upstream_base_url=upstream_base,
-        )
-        await ctx.bus.publish(record)
+        if reassembler is not None:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            record = build_http_record(
+                request_id=request_id,
+                turn=turn,
+                duration_ms=duration_ms,
+                method=method,
+                path=path,
+                req_headers=req_headers,
+                req_body=req_body,
+                status=upstream.status,
+                resp_headers=dict(upstream.headers),
+                resp_body=reassembler.reconstruct(),
+                sse_events=reassembler.events,
+                upstream_base_url=upstream_base,
+            )
+            await self._ctx.bus.publish(record)
 
     async def _buffered_back(
         self,
@@ -361,28 +393,36 @@ class ForwardProxyServer:
         path: str,
         req_headers: dict[str, str],
         req_body: object,
+        protocol: Protocol,
         upstream_base: str,
+        should_capture: bool,
     ) -> None:
-        ctx = self._ctx
         body = await upstream.read()
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        decoded = maybe_decompress(body, upstream.headers.get("Content-Encoding", ""))
-        resp_body = parse_json_body(decoded)
+        if should_capture:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            decoded = maybe_decompress(body, upstream.headers.get("Content-Encoding", ""))
+            content_type = upstream.headers.get("Content-Type", "")
+            if "text/event-stream" in content_type.lower():
+                resp_body, sse_events = reassemble_event_stream_body(protocol, decoded)
+            else:
+                resp_body = parse_json_body(decoded)
+                sse_events = None
 
-        record = build_http_record(
-            request_id=request_id,
-            turn=turn,
-            duration_ms=duration_ms,
-            method=method,
-            path=path,
-            req_headers=req_headers,
-            req_body=req_body,
-            status=upstream.status,
-            resp_headers=dict(upstream.headers),
-            resp_body=resp_body,
-            upstream_base_url=upstream_base,
-        )
-        await ctx.bus.publish(record)
+            record = build_http_record(
+                request_id=request_id,
+                turn=turn,
+                duration_ms=duration_ms,
+                method=method,
+                path=path,
+                req_headers=req_headers,
+                req_body=req_body,
+                status=upstream.status,
+                resp_headers=dict(upstream.headers),
+                resp_body=resp_body,
+                sse_events=sse_events,
+                upstream_base_url=upstream_base,
+            )
+            await self._ctx.bus.publish(record)
 
         writer.write(f"HTTP/1.1 {upstream.status} {upstream.reason or ''}\r\n".encode())
         skip = HOP_BY_HOP | {"content-length"}

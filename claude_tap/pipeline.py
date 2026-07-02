@@ -23,6 +23,11 @@ import aiohttp
 from claude_tap.protocols import Protocol, select_for_path
 from claude_tap.trace import EventBus
 
+try:
+    import backports.zstd as zstd
+except Exception:  # pragma: no cover - optional import guard
+    zstd = None
+
 HOP_BY_HOP = frozenset(
     {
         "connection",
@@ -83,17 +88,30 @@ def parse_json_body(body: bytes) -> object:
 
 
 def maybe_decompress(body: bytes, content_encoding: str) -> bytes:
-    enc = (content_encoding or "").lower()
     if not body:
         return body
+    decoded = body
+    encodings = [e.strip().lower() for e in (content_encoding or "").split(",") if e.strip()]
     try:
-        if enc == "gzip":
-            return gzip.decompress(body)
-        if enc == "deflate":
-            return zlib.decompress(body)
+        for enc in reversed(encodings):
+            if enc == "gzip":
+                decoded = gzip.decompress(decoded)
+            elif enc == "deflate":
+                decoded = zlib.decompress(decoded)
+            elif enc in ("zstd", "zst") and zstd is not None:
+                decoded = zstd.decompress(decoded)
+            else:
+                return body
     except Exception:
         return body
-    return body
+    return decoded
+
+
+def reassemble_event_stream_body(protocol: Protocol, body: bytes) -> tuple[object, list[dict]]:
+    reassembler = protocol.make_reassembler()
+    reassembler.feed_bytes(body)
+    snapshot = reassembler.reconstruct()
+    return snapshot, reassembler.events
 
 
 def capture_only_response(protocol: Protocol, path: str, req_body: object) -> dict:
