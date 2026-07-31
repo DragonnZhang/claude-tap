@@ -31,6 +31,14 @@ def test_template_contains_inject_marker():
     assert INJECT_MARKER in _viewer_template_text()
 
 
+def test_nested_content_scrollers_allow_scroll_chaining():
+    """Long content must release wheel input to the detail pane at its edges."""
+    template = _viewer_template_text()
+
+    assert "overscroll-behavior: contain" not in template
+    assert template.count("overscroll-behavior-y: auto") == 3
+
+
 def test_render_small_trace_inlines_data(trace_dir: Path, sample_anthropic_record: dict):
     jsonl = trace_dir / "trace_120000.jsonl"
     with open(jsonl, "w", encoding="utf-8") as f:

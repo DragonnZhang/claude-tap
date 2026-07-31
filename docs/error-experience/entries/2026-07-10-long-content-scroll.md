@@ -24,3 +24,16 @@ system prompt, and a synthetic 18,000 px response. All three kept their expected
 height and exposed local vertical scrolling.
 
 ![A long tool definition scrolling inside its own block](../../evidence/long-content-scroll.png)
+
+## Follow-up: nested scroll trapping
+
+The first fix used `overscroll-behavior: contain` on readable text, tool
+details, and rendered Markdown. That kept trackpad and wheel input inside the
+nested scroller even after it reached the top or bottom, so users could not
+continue through the detail page in one gesture.
+
+Keep the local height limits, but allow vertical scroll chaining at both
+boundaries. A browser regression test now places a long XML message at each
+boundary and verifies that the outer detail pane resumes scrolling.
+
+![Long XML releases scrolling to the next message](../../evidence/xml-scroll-chaining.png)
