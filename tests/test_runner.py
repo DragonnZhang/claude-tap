@@ -2,13 +2,48 @@ from __future__ import annotations
 
 import asyncio
 import json
+import plistlib
 from pathlib import Path
 
 import pytest
 
 from claude_tap.cli import _export_prompt_from_trace
 from claude_tap.clients import CODEX_APP_CLIENT, GEMINI_CLI, OPENCLAW, OPENCODE
-from claude_tap.runner import run_client
+from claude_tap.runner import _resolve_client_command, run_client
+
+
+def _write_app_bundle(executable: Path, bundle_id: str) -> None:
+    executable.parent.mkdir(parents=True)
+    executable.write_text("")
+    (executable.parent.parent / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": bundle_id}))
+
+
+def test_codexapp_resolves_current_chatgpt_bundle_before_legacy_codex(monkeypatch, tmp_path):
+    chatgpt = tmp_path / "ChatGPT.app" / "Contents" / "MacOS" / "ChatGPT"
+    codex = tmp_path / "Codex.app" / "Contents" / "MacOS" / "Codex"
+    _write_app_bundle(chatgpt, "com.openai.codex")
+    _write_app_bundle(codex, "com.openai.codex")
+    monkeypatch.setattr(
+        "claude_tap.runner._CODEX_APP_EXECUTABLE_CANDIDATES",
+        (chatgpt, codex),
+    )
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+    assert _resolve_client_command(CODEX_APP_CLIENT) == str(chatgpt)
+
+
+def test_codexapp_ignores_non_codex_chatgpt_bundle(monkeypatch, tmp_path):
+    chatgpt = tmp_path / "ChatGPT.app" / "Contents" / "MacOS" / "ChatGPT"
+    codex = tmp_path / "Codex.app" / "Contents" / "MacOS" / "Codex"
+    _write_app_bundle(chatgpt, "com.openai.chat")
+    _write_app_bundle(codex, "com.openai.codex")
+    monkeypatch.setattr(
+        "claude_tap.runner._CODEX_APP_EXECUTABLE_CANDIDATES",
+        (chatgpt, codex),
+    )
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+    assert _resolve_client_command(CODEX_APP_CLIENT) == str(codex)
 
 
 @pytest.mark.asyncio
@@ -124,7 +159,7 @@ async def test_codexapp_prompts_and_quits_existing_app_before_launch(monkeypatch
         quit_called = True
         return True
 
-    monkeypatch.setattr("claude_tap.runner.shutil.which", lambda _cmd: CODEX_APP_CLIENT.cmd)
+    monkeypatch.setattr("claude_tap.runner._resolve_client_command", lambda _client: CODEX_APP_CLIENT.cmd)
     monkeypatch.setattr("claude_tap.runner._find_processes_by_command", lambda _cmd: [24680])
     monkeypatch.setattr("claude_tap.runner._quit_codex_app", fake_quit_codex_app)
     monkeypatch.setattr("claude_tap.runner._wait_for_processes_to_exit", lambda _cmd: True)
@@ -155,7 +190,7 @@ async def test_codexapp_declining_existing_app_quit_aborts_launch(monkeypatch):
         launched = True
         raise AssertionError("Codex App should not launch when the existing instance is left running")
 
-    monkeypatch.setattr("claude_tap.runner.shutil.which", lambda _cmd: CODEX_APP_CLIENT.cmd)
+    monkeypatch.setattr("claude_tap.runner._resolve_client_command", lambda _client: CODEX_APP_CLIENT.cmd)
     monkeypatch.setattr("claude_tap.runner._find_processes_by_command", lambda _cmd: [24680])
     monkeypatch.setattr("builtins.input", lambda _prompt: "n")
     monkeypatch.setattr("sys.stdin", type("Stdin", (), {"isatty": staticmethod(lambda: True)})())

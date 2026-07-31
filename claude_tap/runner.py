@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import plistlib
 import re
 import shutil
 import signal
@@ -29,6 +30,10 @@ _PROXY_ENV_VARS = (
 
 _CODEX_APP_BUNDLE_ID = "com.openai.codex"
 _CODEX_APP_QUIT_TIMEOUT_SECONDS = 10.0
+_CODEX_APP_EXECUTABLE_CANDIDATES = (
+    Path("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"),
+    Path("/Applications/Codex.app/Contents/MacOS/Codex"),
+)
 
 
 def _install_forward_proxy_env(env: dict[str, str], proxy_url: str, ca_cert_path: Path | None) -> None:
@@ -109,6 +114,36 @@ def _find_processes_by_command(command_path: str) -> list[int]:
     return pids
 
 
+def _macos_bundle_identifier(executable: Path) -> str | None:
+    info_plist = executable.parent.parent / "Info.plist"
+    try:
+        with info_plist.open("rb") as handle:
+            payload = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return None
+    bundle_id = payload.get("CFBundleIdentifier") if isinstance(payload, dict) else None
+    return bundle_id if isinstance(bundle_id, str) else None
+
+
+def _resolve_client_command(client: Client) -> str | None:
+    if client.name != "codexapp":
+        return client.cmd if shutil.which(client.cmd) is not None else None
+
+    candidates: list[Path] = []
+    for executable in _CODEX_APP_EXECUTABLE_CANDIDATES:
+        candidates.append(executable)
+        candidates.append(Path.home() / executable.relative_to("/"))
+
+    for executable in candidates:
+        if not executable.is_file():
+            continue
+        if "ChatGPT.app/" in executable.as_posix():
+            if _macos_bundle_identifier(executable) != _CODEX_APP_BUNDLE_ID:
+                continue
+        return str(executable)
+    return None
+
+
 def _quit_codex_app() -> bool:
     if sys.platform != "darwin":
         return False
@@ -145,8 +180,8 @@ def _confirm_quit_existing_codex_app(pids: list[int]) -> bool:
     return answer.strip().lower() in {"", "y", "yes"}
 
 
-def _prepare_codex_app_launch(client: Client) -> bool:
-    existing_pids = _find_processes_by_command(client.cmd)
+def _prepare_codex_app_launch(command_path: str) -> bool:
+    existing_pids = _find_processes_by_command(command_path)
     if not existing_pids:
         return True
 
@@ -166,7 +201,7 @@ def _prepare_codex_app_launch(client: Client) -> bool:
     if not _quit_codex_app():
         sys.stderr.write("[claude-tap] Failed to ask Codex App to quit. Quit it manually and retry.\n")
         return False
-    if not _wait_for_processes_to_exit(client.cmd):
+    if not _wait_for_processes_to_exit(command_path):
         sys.stderr.write("[claude-tap] Timed out waiting for Codex App to quit. Quit it manually and retry.\n")
         return False
     return True
@@ -189,13 +224,19 @@ async def run_client(
     to a clean child shutdown without suspending the proxy.
     """
 
-    if shutil.which(client.cmd) is None:
-        sys.stderr.write(
-            f"\nError: '{client.cmd}' not found in PATH.\nInstall {client.label} first: {client.install_url}\n"
-        )
+    resolved_cmd = _resolve_client_command(client)
+    if resolved_cmd is None:
+        if client.name == "codexapp":
+            install_hint = (
+                "Install the ChatGPT desktop app in /Applications "
+                "(bundle id com.openai.codex), or install the legacy Codex.app."
+            )
+        else:
+            install_hint = f"Install {client.label} first: {client.install_url}"
+        sys.stderr.write(f"\nError: '{client.cmd}' not found in PATH.\n{install_hint}\n")
         return 1
 
-    if client.name == "codexapp" and not _prepare_codex_app_launch(client):
+    if client.name == "codexapp" and not _prepare_codex_app_launch(resolved_cmd):
         return 1
 
     env = os.environ.copy()
@@ -244,7 +285,7 @@ async def run_client(
                 f"approve actions in-session or pass --no-yolo to silence this.\n"
             )
 
-    cmd = [client.cmd] + cmd_args
+    cmd = [resolved_cmd] + cmd_args
     sys.stdout.write(f"\n[claude-tap] launching {client.label}: {' '.join(cmd)}\n")
     if proxy_mode == "forward":
         sys.stdout.write(f"[claude-tap] HTTPS_PROXY={proxy_url}\n")
