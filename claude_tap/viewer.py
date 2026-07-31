@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 from claude_tap._version import __version__
+from claude_tap.tool_normalization import expand_tool_namespaces
 
 INJECT_MARKER = "<!-- claude-tap:inject -->"
 LAZY_THRESHOLD = 50
@@ -179,7 +180,7 @@ def _extract_request_tools(body: dict) -> list[dict]:
         if not isinstance(item, dict) or item.get("type") != "additional_tools":
             continue
         tools.extend(tool for tool in item.get("tools") or [] if isinstance(tool, dict))
-    return tools
+    return expand_tool_namespaces(tools)
 
 
 def _request_tool_name(tool: dict) -> str:

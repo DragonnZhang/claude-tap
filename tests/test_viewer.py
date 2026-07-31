@@ -140,7 +140,17 @@ def test_extract_metadata_pulls_additional_tools_from_responses_input():
                         "tools": [
                             {"type": "custom", "name": "exec"},
                             {"type": "function", "name": "wait"},
-                            {"type": "namespace", "name": "collaboration", "tools": []},
+                            {
+                                "type": "namespace",
+                                "name": "collaboration",
+                                "tools": [
+                                    {
+                                        "type": "function",
+                                        "name": "spawn_agent",
+                                        "parameters": {"type": "object"},
+                                    }
+                                ],
+                            },
                         ],
                     },
                     {"type": "message", "role": "user", "content": "hello"},
@@ -154,7 +164,7 @@ def test_extract_metadata_pulls_additional_tools_from_responses_input():
 
     assert meta is not None
     assert meta["message_count"] == 1
-    assert meta["tool_names"] == ["exec", "wait", "collaboration"]
+    assert meta["tool_names"] == ["exec", "wait", "collaboration.spawn_agent"]
 
 
 def test_extract_metadata_counts_custom_tool_items_and_response_calls():

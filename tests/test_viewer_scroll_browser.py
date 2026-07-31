@@ -81,3 +81,81 @@ def test_long_xml_releases_wheel_scroll_to_detail_at_boundaries(tmp_path: Path) 
         assert detail_after_up < detail_before_up
 
         browser.close()
+
+
+def test_namespace_tools_render_callable_children(tmp_path: Path) -> None:
+    record = {
+        "timestamp": "2026-07-31T12:00:00+08:00",
+        "request_id": "req_namespace_tools",
+        "turn": 1,
+        "duration_ms": 42,
+        "request": {
+            "method": "POST",
+            "path": "/v1/responses",
+            "headers": {},
+            "body": {
+                "model": "gpt-test",
+                "input": [
+                    {
+                        "type": "additional_tools",
+                        "role": "developer",
+                        "tools": [
+                            {
+                                "type": "namespace",
+                                "name": "web",
+                                "description": "Tools in the web namespace.",
+                                "tools": [
+                                    {
+                                        "type": "function",
+                                        "name": "run",
+                                        "description": "Tool for accessing the internet.",
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {
+                                                "search_query": {
+                                                    "type": "array",
+                                                    "description": "Queries to search for.",
+                                                }
+                                            },
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {"type": "message", "role": "user", "content": "Search the web."},
+                ],
+            },
+        },
+        "response": {"status": 200, "headers": {}, "body": {}},
+    }
+    trace = tmp_path / "trace_namespace_tools.jsonl"
+    trace.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    output = trace.with_suffix(".html")
+    assert render_html(trace, output)
+
+    with playwright.sync_playwright() as runtime:
+        try:
+            browser = runtime.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            pytest.skip(f"Playwright Chromium is unavailable: {exc}")
+        page = browser.new_page(viewport={"width": 1440, "height": 800})
+        page.goto(output.as_uri())
+        page.locator(".section-header").filter(has_text="Tools").click()
+        tool = page.locator(".tool-block")
+        tool.wait_for()
+
+        assert page.locator(".tool-namespace .tn-name").inner_text() == "web"
+        assert tool.locator(".tb-name").inner_text() == "run"
+        assert tool.get_attribute("data-tool-name") == "web.run"
+        assert page.locator(".section-header .badge").first.inner_text() == "1 tools"
+        tool.locator(".tool-block-header").click()
+        assert "search_query" in tool.locator(".tool-block-body").inner_text()
+
+        search = page.locator(".tool-filter-input")
+        search.fill("search_query")
+        assert tool.is_visible()
+        search.fill("missing_parameter")
+        assert tool.is_hidden()
+
+        browser.close()
