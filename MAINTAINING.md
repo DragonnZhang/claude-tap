@@ -60,7 +60,7 @@ Then:
 3. Add fake-upstream E2E coverage for new routing or transport behavior.
 4. Verify that a real generation request is recorded and rendered, rather
    than only model, identity, or bootstrap calls.
-5. Update the client tables in both README files and `CHANGELOG.md`.
+5. Update the client tables in both README files.
 
 Verify the final upstream URL for every authentication/target combination and
 never silently replace a user's configured upstream.
