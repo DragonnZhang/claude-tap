@@ -6,8 +6,7 @@ Keep this repository easy to verify and maintain.
 
 1. Check `git status` and preserve unrelated user changes.
 2. Read the affected implementation and tests.
-3. Use `docs/architecture.md` for system boundaries and
-   `docs/adding-clients.md` for client integrations.
+3. Use `docs/README.md` for architecture and maintenance guidance.
 
 ## Before committing
 
@@ -36,4 +35,4 @@ is installed and manually inspect a real trace when practical.
 - Keep public behavior documented in both README files and `CHANGELOG.md`.
 - Push changes on a branch and open a GitHub pull request.
 
-More detail is in `docs/development.md`.
+More detail is in `docs/README.md`.

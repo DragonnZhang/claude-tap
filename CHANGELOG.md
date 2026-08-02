@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale agent skills that duplicated code, tests, or pull-request history.
 - Custom commit hooks, documentation-only CI gates, screenshot repositories,
   and automatic release tagging on every `main` push.
+- Optional helper scripts and duplicate maintainer documents without a stable
+  maintenance contract.
 
 ## [0.1.12] - 2026-02-25
 
