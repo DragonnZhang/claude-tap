@@ -217,8 +217,8 @@ uv sync --extra dev
 uv run claude-tap --version
 ```
 
-For architecture, contributing, and coding-agent guidance, see
-[`CLAUDE.md`](CLAUDE.md) and [`AGENTS.md`](AGENTS.md).
+For architecture and maintenance guidance, see [`docs/`](docs/). Contribution
+rules for coding agents are in [`AGENTS.md`](AGENTS.md).
 
 ## License
 

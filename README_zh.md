@@ -209,7 +209,7 @@ uv sync --extra dev
 uv run claude-tap --version
 ```
 
-架构、贡献和 coding-agent 指引见 [`CLAUDE.md`](CLAUDE.md) 和 [`AGENTS.md`](AGENTS.md)。
+架构和维护指南见 [`docs/`](docs/)，coding-agent 贡献规则见 [`AGENTS.md`](AGENTS.md)。
 
 ## License
 
