@@ -10,7 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Forward proxy mode with HTTP `CONNECT` tunneling and TLS termination.
 - Real E2E scripts with tmux support for interactive and non-interactive flows.
-- Engineering practice and compounding-engineering documentation for agent workflows.
 - Built-in client definitions for Antigravity CLI, Kimi Code, MiMo Code,
   Oh My Pi, OpenClaw, Hermes Agent, Kimi CLI, Pi, opencode, iFlow, Cursor,
   Qoder, Devin, Codex App, and Grok Build.
@@ -21,8 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - CI and test hardening for real proxy/E2E scenarios and Python 3.13 certificate validation.
 - Real E2E fixtures and OAuth preflight handling were stabilized.
-- README, support matrix, and maintainer docs now describe the current
-  multi-client registry instead of only the original Claude/Codex paths.
+- Maintainer documentation was consolidated into focused architecture,
+  development, and client-integration guides.
+
+### Removed
+- Historical screenshots, recordings, completed plans, incident journals, and
+  stale agent skills that duplicated code, tests, or pull-request history.
+- Custom commit hooks, documentation-only CI gates, screenshot repositories,
+  and automatic release tagging on every `main` push.
 
 ## [0.1.12] - 2026-02-25
 
