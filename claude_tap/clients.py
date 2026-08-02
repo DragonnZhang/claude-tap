@@ -88,12 +88,9 @@ class Client:
     # regional endpoint configured in their CLI's own config is preserved.
     read_configured_upstream: Callable[[Mapping[str, str]], str | None] = field(default=_no_configured_upstream)
 
-    # Whether ``env_overrides`` actually redirects this client's outbound
-    # HTTPS. For multi-backend clients (opencode / pi / kimi / iflow /
-    # hermes) the user's config-file ``baseURL`` overrides any env we set,
-    # so env-based reverse mode silently fails. For those, we default to
-    # forward mode (HTTPS_PROXY + CA-MITM) which redirects regardless of
-    # config. Single-backend clients honor their env vars reliably.
+    # Whether ``env_overrides`` redirects every outbound request required to
+    # reach the model call. False selects forward mode (HTTPS_PROXY + CA-MITM)
+    # so config precedence or startup requests cannot bypass capture.
     env_redirect_reliable: bool = True
 
     pre_launch_env_purge: tuple[str, ...] = ()
@@ -1382,6 +1379,9 @@ ANTIGRAVITY_CLI = Client(
     env_overrides=_antigravity_env,
     read_configured_upstream=_antigravity_configured,
     detect_auth=_antigravity_auth,
+    # CLOUD_CODE_URL redirects generation calls but not OAuth identity and
+    # other startup requests, so forward mode is required for full capture.
+    env_redirect_reliable=False,
     warn_on_missing_yolo=False,
 )
 

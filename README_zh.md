@@ -91,6 +91,7 @@ claude-tap run claude --export-prompt claude.prompt.md --no-open -- -p hi
 claude-tap run codex --export-prompt codex.prompt.md --no-open -- exec "hi"
 claude-tap run gemini --export-prompt gemini.prompt.md --no-open -- -p hi
 claude-tap run grok --export-prompt grok.prompt.md --no-open -- --single hi
+claude-tap run agy --export-prompt antigravity.prompt.md --no-open -- --print hi --dangerously-skip-permissions
 claude-tap run kimi-code --export-prompt kimi-code.prompt.md --no-open -- --prompt hi
 claude-tap run omp --export-prompt omp.prompt.md --no-open -- --print --mode text --no-session hi
 ```
@@ -121,7 +122,7 @@ claude-tap export ./.traces/2026-05-06/trace_120137.jsonl --format prompt-md -o 
 | Codex App | `claude-tap codexapp` | forward | verified |
 | Gemini CLI | `claude-tap gemini` | reverse | verified |
 | Grok Build | `claude-tap grok` | reverse | prompt-export verified |
-| Antigravity CLI | `claude-tap agy` | reverse | wired |
+| Antigravity CLI | `claude-tap agy` | forward | prompt-export verified |
 | Kimi Code | `claude-tap kimi-code` | forward | prompt-export verified |
 | MiMo Code | `claude-tap mimo` | forward | prompt-export verified |
 | OpenClaw | `claude-tap openclaw` | reverse | prompt-export verified |
@@ -147,8 +148,8 @@ capture-only 模式下发出过包含 prompt 的请求。`wired` 表示代码路
 
 | 模式 | 用于 | 做法 |
 | --- | --- | --- |
-| reverse | Claude Code、Codex、Gemini、Grok Build、Antigravity、OpenClaw、Cursor、Qoder | 设置 base URL、CLI 参数或临时子进程配置，让 CLI 请求 `127.0.0.1` |
-| forward | Codex App、opencode、Kimi、Kimi Code、MiMo、Pi、Oh My Pi、Hermes、iFlow、Devin | 设置 `HTTPS_PROXY`，并用本地 CA 拦截 HTTPS |
+| reverse | Claude Code、Codex、Gemini、Grok Build、OpenClaw、Cursor、Qoder | 设置 base URL、CLI 参数或临时子进程配置，让 CLI 请求 `127.0.0.1` |
+| forward | Codex App、Antigravity、opencode、Kimi、Kimi Code、MiMo、Pi、Oh My Pi、Hermes、iFlow、Devin | 设置 `HTTPS_PROXY`，并用本地 CA 拦截 HTTPS |
 
 两种模式都会尽量保留你原本配置的真实 upstream。如果你的 CLI 本来就走私有 relay 或区域 endpoint，
 `claude-tap` 会继续转发到那里，而不是偷偷换成官方默认地址。

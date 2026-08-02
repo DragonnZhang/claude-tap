@@ -61,6 +61,11 @@ class Protocol:
     capture_paths: tuple[str, ...] | None = None
     capture_methods: tuple[str, ...] | None = None
 
+    # Capture-only clients may need non-model bootstrap calls to succeed
+    # before they emit a prompt-bearing request. Return a JSON response to
+    # satisfy such a call locally, or None to relay it to the real upstream.
+    capture_only_bootstrap_response: Callable[[str, str, object], object | None] | None = None
+
     # Streaming detection — most protocols use ``body.stream``; Gemini uses
     # the URL verb instead, so we override per-protocol.
     is_streaming: Callable[[str, object], bool] = field(default=_default_is_streaming)
@@ -113,6 +118,98 @@ def _path_matches(path: str, allowed_paths: tuple[str, ...]) -> bool:
 def _gemini_is_streaming(path: str, body: object) -> bool:
     # Gemini encodes streaming in the URL, not the body.
     return ":streamGenerateContent" in path or "alt=sse" in path
+
+
+def _antigravity_capture_only_bootstrap_response(method: str, path: str, _body: object) -> object | None:
+    clean = path.split("?", 1)[0].rstrip("/") or "/"
+    if method.upper() == "GET" and clean == "/oauth2/v2/userinfo":
+        return {
+            "id": "claude-tap-capture",
+            "email": "capture@claude-tap.invalid",
+            "verified_email": True,
+            "name": "Claude Tap Capture",
+        }
+    if method.upper() == "GET" and clean == "/oauth2/v3/tokeninfo":
+        return {
+            "aud": "claude-tap-capture",
+            "email": "capture@claude-tap.invalid",
+            "email_verified": "true",
+            "expires_in": "3600",
+            "scope": "https://www.googleapis.com/auth/userinfo.email",
+            "sub": "claude-tap-capture",
+        }
+    if clean.startswith("/v1internal/"):
+        return {
+            "name": clean.removeprefix("/v1internal/"),
+            "done": True,
+            "response": {
+                "cloudaicompanionProject": {
+                    "id": "claude-tap-capture",
+                    "name": "claude-tap-capture",
+                    "projectNumber": "1234567890",
+                }
+            },
+        }
+    if not clean.startswith("/v1internal:"):
+        return None
+    if "loadCodeAssist" in clean:
+        tier = {
+            "id": "free-tier",
+            "name": "Free",
+            "description": "",
+            "isDefault": True,
+            "userDefinedCloudaicompanionProject": False,
+        }
+        return {
+            "cloudaicompanionProject": "claude-tap-capture",
+            "currentTier": tier,
+            "allowedTiers": [tier],
+        }
+    if "fetchAvailableModels" in clean:
+        model_ids = (
+            "MODEL_GOOGLE_GEMINI_2_5_FLASH",
+            "MODEL_GOOGLE_GEMINI_2_5_FLASH_LITE",
+            "MODEL_PLACEHOLDER_M50",
+        )
+        models = {
+            model_id: {
+                "model": model_id,
+                "displayName": model_id,
+                "maxTokens": 1_000_000,
+                "maxOutputTokens": 8192,
+                "vertexModelId": "gemini-2.5-flash",
+            }
+            for model_id in model_ids
+        }
+        return {
+            "models": models,
+            "defaultAgentModelId": model_ids[0],
+            "agentModelSorts": [
+                {
+                    "displayName": "Default",
+                    "groups": [{"displayName": "Default", "modelIds": list(model_ids)}],
+                }
+            ],
+        }
+    if "fetchUserInfo" in clean:
+        return {"userSettings": {}, "userTags": [], "regionCode": "US"}
+    if "setUserSettings" in clean:
+        return {"cloudaicompanionProject": "claude-tap-capture", "freeTierDataCollectionOptin": False}
+    if "retrieveUserQuotaSummary" in clean:
+        return {"buckets": []}
+    if "onboardUser" in clean:
+        return {
+            "name": "operations/claude-tap-capture",
+            "done": True,
+            "response": {
+                "cloudaicompanionProject": {
+                    "id": "claude-tap-capture",
+                    "name": "claude-tap-capture",
+                    "projectNumber": "1234567890",
+                }
+            },
+        }
+    return {}
 
 
 def _codex_app_is_streaming(path: str, body: object) -> bool:
@@ -261,9 +358,10 @@ GEMINI = Protocol(
 ANTIGRAVITY = Protocol(
     name="antigravity",
     default_target="https://daily-cloudcode-pa.googleapis.com",
-    allowed_paths=("/v1internal:",),
+    allowed_paths=("/v1internal:", "/v1internal/", "/oauth2/v2/userinfo", "/oauth2/v3/tokeninfo"),
     capture_paths=("/v1internal:streamGenerateContent",),
     capture_methods=("POST",),
+    capture_only_bootstrap_response=_antigravity_capture_only_bootstrap_response,
     is_streaming=_gemini_is_streaming,
     make_reassembler=GeminiReassembler,
     extract_usage=_gemini_usage,

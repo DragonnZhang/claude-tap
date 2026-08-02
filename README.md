@@ -96,6 +96,7 @@ claude-tap run claude --export-prompt claude.prompt.md --no-open -- -p hi
 claude-tap run codex --export-prompt codex.prompt.md --no-open -- exec "hi"
 claude-tap run gemini --export-prompt gemini.prompt.md --no-open -- -p hi
 claude-tap run grok --export-prompt grok.prompt.md --no-open -- --single hi
+claude-tap run agy --export-prompt antigravity.prompt.md --no-open -- --print hi --dangerously-skip-permissions
 claude-tap run kimi-code --export-prompt kimi-code.prompt.md --no-open -- --prompt hi
 claude-tap run omp --export-prompt omp.prompt.md --no-open -- --print --mode text --no-session hi
 ```
@@ -129,7 +130,7 @@ CLIs; it does not install those CLIs for you.
 | Codex App | `claude-tap codexapp` | forward | verified |
 | Gemini CLI | `claude-tap gemini` | reverse | verified |
 | Grok Build | `claude-tap grok` | reverse | prompt-export verified |
-| Antigravity CLI | `claude-tap agy` | reverse | wired |
+| Antigravity CLI | `claude-tap agy` | forward | prompt-export verified |
 | Kimi Code | `claude-tap kimi-code` | forward | prompt-export verified |
 | MiMo Code | `claude-tap mimo` | forward | prompt-export verified |
 | OpenClaw | `claude-tap openclaw` | reverse | prompt-export verified |
@@ -157,8 +158,8 @@ It uses two interception modes:
 
 | Mode | Used for | How |
 | --- | --- | --- |
-| reverse | Claude Code, Codex, Gemini, Grok Build, Antigravity, OpenClaw, Cursor, Qoder | set a base URL, CLI flag, or temporary child config so the CLI calls `127.0.0.1` |
-| forward | Codex App, opencode, Kimi, Kimi Code, MiMo, Pi, Oh My Pi, Hermes, iFlow, Devin | set `HTTPS_PROXY` and use a local CA to intercept HTTPS |
+| reverse | Claude Code, Codex, Gemini, Grok Build, OpenClaw, Cursor, Qoder | set a base URL, CLI flag, or temporary child config so the CLI calls `127.0.0.1` |
+| forward | Codex App, Antigravity, opencode, Kimi, Kimi Code, MiMo, Pi, Oh My Pi, Hermes, iFlow, Devin | set `HTTPS_PROXY` and use a local CA to intercept HTTPS |
 
 In both modes, `claude-tap` tries to preserve your real upstream. If your CLI
 already uses a private relay or regional endpoint, `claude-tap` forwards there
