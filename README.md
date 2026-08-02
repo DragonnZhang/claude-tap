@@ -217,7 +217,7 @@ uv sync --extra dev
 uv run claude-tap --version
 ```
 
-For architecture and maintenance guidance, see [`docs/README.md`](docs/README.md). Contribution
+For architecture and maintenance guidance, see [`MAINTAINING.md`](MAINTAINING.md). Contribution
 rules for coding agents are in [`AGENTS.md`](AGENTS.md).
 
 ## License

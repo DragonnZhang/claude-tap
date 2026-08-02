@@ -209,7 +209,7 @@ uv sync --extra dev
 uv run claude-tap --version
 ```
 
-架构和维护指南见 [`docs/README.md`](docs/README.md)，coding-agent 贡献规则见 [`AGENTS.md`](AGENTS.md)。
+架构和维护指南见 [`MAINTAINING.md`](MAINTAINING.md)，coding-agent 贡献规则见 [`AGENTS.md`](AGENTS.md)。
 
 ## License
 

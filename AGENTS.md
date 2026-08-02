@@ -6,7 +6,7 @@ Keep this repository easy to verify and maintain.
 
 1. Check `git status` and preserve unrelated user changes.
 2. Read the affected implementation and tests.
-3. Use `docs/README.md` for architecture and maintenance guidance.
+3. Use `MAINTAINING.md` for architecture and maintenance guidance.
 
 ## Before committing
 
@@ -32,7 +32,7 @@ is installed and manually inspect a real trace when practical.
   environments. Attach temporary visual evidence to the pull request.
 - Never weaken credential redaction or silently replace a user's configured
   upstream.
-- Keep public behavior documented in both README files and `CHANGELOG.md`.
+- Keep public behavior documented in both README files.
 - Push changes on a branch and open a GitHub pull request.
 
-More detail is in `docs/README.md`.
+More detail is in `MAINTAINING.md`.
