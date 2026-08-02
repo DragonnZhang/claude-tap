@@ -126,7 +126,17 @@ def test_openai_responses_snapshot_extracts_additional_tools_from_input():
                             "type": "namespace",
                             "name": "collaboration",
                             "description": "Collaborate with other agents",
-                            "tools": [{"type": "function", "name": "spawn_agent"}],
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "name": "spawn_agent",
+                                    "description": "Create a sub-agent",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {"task": {"type": "string"}},
+                                    },
+                                }
+                            ],
                         },
                     ],
                 },
@@ -143,9 +153,10 @@ def test_openai_responses_snapshot_extracts_additional_tools_from_input():
     assert snapshot.turn == 2
     assert snapshot.developer_prompt == "developer rules"
     assert snapshot.user_message == "do the thing"
-    assert [tool.name for tool in snapshot.tools] == ["exec", "wait", "collaboration"]
+    assert [tool.name for tool in snapshot.tools] == ["exec", "wait", "collaboration.spawn_agent"]
     assert snapshot.tools[1].schema["properties"]["cell_id"]["type"] == "string"
-    assert "## collaboration" in markdown
+    assert snapshot.tools[2].schema["properties"]["task"]["type"] == "string"
+    assert "## collaboration.spawn_agent" in markdown
     assert "_No tools captured._" not in markdown
 
 

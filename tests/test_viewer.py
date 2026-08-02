@@ -31,6 +31,14 @@ def test_template_contains_inject_marker():
     assert INJECT_MARKER in _viewer_template_text()
 
 
+def test_nested_content_scrollers_allow_scroll_chaining():
+    """Long content must release wheel input to the detail pane at its edges."""
+    template = _viewer_template_text()
+
+    assert "overscroll-behavior: contain" not in template
+    assert template.count("overscroll-behavior-y: auto") == 3
+
+
 def test_render_small_trace_inlines_data(trace_dir: Path, sample_anthropic_record: dict):
     jsonl = trace_dir / "trace_120000.jsonl"
     with open(jsonl, "w", encoding="utf-8") as f:
@@ -132,7 +140,17 @@ def test_extract_metadata_pulls_additional_tools_from_responses_input():
                         "tools": [
                             {"type": "custom", "name": "exec"},
                             {"type": "function", "name": "wait"},
-                            {"type": "namespace", "name": "collaboration", "tools": []},
+                            {
+                                "type": "namespace",
+                                "name": "collaboration",
+                                "tools": [
+                                    {
+                                        "type": "function",
+                                        "name": "spawn_agent",
+                                        "parameters": {"type": "object"},
+                                    }
+                                ],
+                            },
                         ],
                     },
                     {"type": "message", "role": "user", "content": "hello"},
@@ -146,7 +164,7 @@ def test_extract_metadata_pulls_additional_tools_from_responses_input():
 
     assert meta is not None
     assert meta["message_count"] == 1
-    assert meta["tool_names"] == ["exec", "wait", "collaboration"]
+    assert meta["tool_names"] == ["exec", "wait", "collaboration.spawn_agent"]
 
 
 def test_extract_metadata_counts_custom_tool_items_and_response_calls():

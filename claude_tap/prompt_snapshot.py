@@ -11,6 +11,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from claude_tap.tool_normalization import expand_tool_namespaces
+
 
 @dataclass(frozen=True)
 class PromptTool:
@@ -422,9 +424,7 @@ def _openai_tools(tools: Any) -> list[PromptTool]:
     if not isinstance(tools, list):
         return []
     out: list[PromptTool] = []
-    for tool in tools:
-        if not isinstance(tool, dict):
-            continue
+    for tool in expand_tool_namespaces(tools):
         if isinstance(tool.get("function"), dict):
             fn = tool["function"]
             raw = tool

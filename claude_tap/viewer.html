@@ -413,7 +413,10 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .content-block { margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
 .content-block:first-child { margin-top: 0; }
 .content-block.text-block {
-  max-height: min(55vh, 480px); overflow-y: auto; overscroll-behavior: contain;
+  max-height: min(55vh, 480px); overflow-y: auto;
+  /* Let wheel and trackpad input continue into the detail pane when this
+     nested scroller reaches either boundary. */
+  overscroll-behavior-y: auto;
 }
 .msg.reasoning-only { padding: 8px 12px; }
 .reasoning-placeholder-row { display: flex; align-items: center; gap: 8px; margin: 0; }
@@ -434,6 +437,32 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   border: 1px solid var(--border-light); border-radius: var(--radius-sm);
   margin-bottom: 4px; overflow: hidden; background: var(--bg-card);
 }
+.tool-namespace {
+  margin-bottom: 8px; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.tool-namespace-header {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: baseline; gap: 8px; padding: 7px 10px;
+  border-bottom: 1px solid var(--border-light);
+}
+.tn-kind {
+  color: var(--text-tertiary); font-family: var(--mono); font-size: 9px;
+  font-weight: 600; letter-spacing: .35px; text-transform: uppercase;
+}
+.tn-name { color: var(--text); font-family: var(--mono); font-size: 12px; font-weight: 650; }
+.tn-desc {
+  min-width: 0; overflow: hidden; color: var(--text-tertiary);
+  font-size: 11px; text-overflow: ellipsis; white-space: nowrap;
+}
+.tn-count { color: var(--text-tertiary); font-size: 10px; white-space: nowrap; }
+.tool-namespace-tools { padding: 3px; background: var(--bg-card); }
+.tool-namespace .tool-block {
+  margin: 0; border: 0; border-radius: 0; border-bottom: 1px solid var(--border-light);
+}
+.tool-namespace .tool-block:last-child { border-bottom: 0; }
+.tool-namespace .tool-block-header { padding: 7px 9px; }
 .tool-block-header {
   display: flex; align-items: baseline; gap: 10px;
   padding: 8px 12px; cursor: pointer; user-select: none; transition: background .1s;
@@ -448,7 +477,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .tb-desc { color: var(--text-tertiary); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .tool-block-body {
   display: none; padding: 10px 12px 12px; border-top: 1px solid var(--border-light); font-size: 12px;
-  max-height: min(60vh, 520px); overflow: auto; overscroll-behavior: contain;
+  max-height: min(60vh, 520px); overflow: auto; overscroll-behavior-y: auto;
 }
 .tool-block-body.open { display: block; }
 .tb-full-desc {
@@ -515,7 +544,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .md-tab.active { background: var(--bg-card); color: var(--text); font-weight: 600; }
 .md-host[data-mode="raw"] .md-view-md { display: none; }
 .md-host[data-mode="md"]  .md-view-raw { display: none; }
-.md-view-md { max-height: 500px; overflow: auto; overscroll-behavior: contain; }
+.md-view-md { max-height: 500px; overflow: auto; overscroll-behavior-y: auto; }
 .md-body { line-height: 1.55; font-size: 13px; color: var(--text); }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4 { margin: 12px 0 6px; line-height: 1.3; }
 .md-body h1 { font-size: 18px; }
@@ -3444,7 +3473,27 @@ function getTools(body) {
       if (item?.type === 'additional_tools' && Array.isArray(item.tools)) tools.push(...item.tools);
     });
   }
-  return tools.filter(tool => tool && typeof tool === 'object');
+  return expandToolNamespaces(tools);
+}
+
+function expandToolNamespaces(tools, namespace = '', namespaceDescription = '') {
+  const expanded = [];
+  (Array.isArray(tools) ? tools : []).forEach(tool => {
+    if (!tool || typeof tool !== 'object') return;
+    const qualifiedName = [namespace, tool.name || ''].filter(Boolean).join('.');
+    if (tool.type === 'namespace' && Array.isArray(tool.tools) && tool.tools.length) {
+      expanded.push(...expandToolNamespaces(tool.tools, qualifiedName, tool.description || ''));
+      return;
+    }
+    expanded.push(namespace && qualifiedName ? {
+      ...tool,
+      name: qualifiedName,
+      _toolLeafName: tool.name || qualifiedName,
+      _toolNamespace: namespace,
+      _toolNamespaceDescription: namespaceDescription,
+    } : tool);
+  });
+  return expanded;
 }
 
 function getToolName(tool) {
@@ -3672,22 +3721,39 @@ function renderContent(content, role) {
 }
 
 function renderTools(tools) {
-  const blocks = tools.map(td => {
-    // OpenAI Responses API built-in tools (web_search / file_search /
-    // code_interpreter / ...) identify by ``type`` and have no ``name``.
-    const definition = td.function && typeof td.function === 'object' ? td.function : td;
-    const name = getToolName(td) || 'unknown', desc = definition.description || td.description || '';
-    const shortDesc = desc.split('\n')[0].substring(0, 120);
-    const schema = definition.input_schema || definition.parameters || {};
-    const props = schema.properties || {};
-    const required = new Set(schema.required || []);
-    const keys = Object.keys(props);
-    let paramsHtml = '';
-    if (keys.length) {
-      paramsHtml = `<div class="tb-params-title">${t('params')}</div>` +
-        keys.map(k => renderToolParam(k, props[k], required.has(k))).join('');
+  const groups = [];
+  const namespaces = new Map();
+  tools.forEach(td => {
+    const namespace = td._toolNamespace || '';
+    if (!namespace) {
+      groups.push({ type: 'tool', tool: td });
+      return;
     }
-    return `<div class="tool-block"><div class="tool-block-header"><span class="tb-arrow">&#9654;</span><span class="tb-name">${esc(name)}</span><span class="tb-desc">${esc(shortDesc)}</span></div><div class="tool-block-body">${desc ? `<div class="tb-full-desc">${esc(desc)}</div>` : ''}${paramsHtml}</div></div>`;
+    let group = namespaces.get(namespace);
+    if (!group) {
+      group = {
+        type: 'namespace',
+        name: namespace,
+        description: td._toolNamespaceDescription || '',
+        tools: [],
+      };
+      namespaces.set(namespace, group);
+      groups.push(group);
+    }
+    group.tools.push(td);
+  });
+  const blocks = groups.map(group => {
+    if (group.type === 'tool') return renderToolBlock(group.tool);
+    const description = group.description.split('\n')[0].substring(0, 160);
+    return `<div class="tool-namespace" data-tool-namespace="${esc(group.name)}">` +
+      `<div class="tool-namespace-header">` +
+        `<span class="tn-kind">namespace</span>` +
+        `<span class="tn-name">${esc(group.name)}</span>` +
+        `<span class="tn-desc">${esc(description)}</span>` +
+        `<span class="tn-count">${group.tools.length} ${t('badge_tools')}</span>` +
+      `</div>` +
+      `<div class="tool-namespace-tools">${group.tools.map(renderToolBlock).join('')}</div>` +
+    `</div>`;
   }).join('');
   // Codex sessions ship 100+ tools — a substring filter on name/desc is
   // way more useful than scrolling. The row is sticky so the input
@@ -3699,6 +3765,32 @@ function renderTools(tools) {
   return filterRow + blocks;
 }
 
+function renderToolBlock(td) {
+  // OpenAI Responses API built-in tools (web_search / file_search /
+  // code_interpreter / ...) identify by ``type`` and have no ``name``.
+  const definition = td.function && typeof td.function === 'object' ? td.function : td;
+  const qualifiedName = getToolName(td) || 'unknown';
+  const name = td._toolLeafName || qualifiedName;
+  const desc = definition.description || td.description || '';
+  const shortDesc = desc.split('\n')[0].substring(0, 120);
+  const schema = definition.input_schema || definition.parameters || {};
+  const props = schema.properties || {};
+  const required = new Set(schema.required || []);
+  const keys = Object.keys(props);
+  let paramsHtml = '';
+  if (keys.length) {
+    paramsHtml = `<div class="tb-params-title">${t('params')}</div>` +
+      keys.map(k => renderToolParam(k, props[k], required.has(k))).join('');
+  }
+  return `<div class="tool-block" data-tool-name="${esc(qualifiedName)}">` +
+    `<div class="tool-block-header" title="${esc(qualifiedName)}">` +
+      `<span class="tb-arrow">&#9654;</span><span class="tb-name">${esc(name)}</span>` +
+      `<span class="tb-desc">${esc(shortDesc)}</span>` +
+    `</div>` +
+    `<div class="tool-block-body">${desc ? `<div class="tb-full-desc">${esc(desc)}</div>` : ''}${paramsHtml}</div>` +
+  `</div>`;
+}
+
 function filterToolList(input) {
   const q = (input.value || '').trim().toLowerCase();
   const root = input.closest('.section-body') || input.parentElement.parentElement;
@@ -3706,12 +3798,20 @@ function filterToolList(input) {
   const blocks = root.querySelectorAll('.tool-block');
   let shown = 0;
   blocks.forEach(b => {
-    const name = (b.querySelector('.tb-name')?.textContent || '').toLowerCase();
-    const desc = (b.querySelector('.tb-desc')?.textContent || '').toLowerCase();
-    const match = !q || name.includes(q) || desc.includes(q);
+    const searchText = `${b.dataset.toolName || ''} ${b.textContent || ''}`.toLowerCase();
+    const match = !q || searchText.includes(q);
     b.style.display = match ? '' : 'none';
     if (match) shown++;
   });
+  root.querySelectorAll('.tool-namespace').forEach(group => {
+    const namespaceMatches = !q || (group.dataset.toolNamespace || '').toLowerCase().includes(q);
+    const children = [...group.querySelectorAll('.tool-block')];
+    if (namespaceMatches) {
+      children.forEach(child => { child.style.display = ''; });
+    }
+    group.style.display = namespaceMatches || children.some(child => child.style.display !== 'none') ? '' : 'none';
+  });
+  shown = [...blocks].filter(block => block.style.display !== 'none').length;
   const count = root.querySelector('[data-tool-count]');
   if (count) count.textContent = q ? `${shown} / ${blocks.length}` : '';
 }
