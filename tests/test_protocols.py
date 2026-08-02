@@ -49,11 +49,32 @@ def test_codexapp_relays_all_but_captures_only_response_posts():
 
 def test_antigravity_relays_internal_paths_but_captures_only_generation():
     assert ANTIGRAVITY.matches("/v1internal:loadCodeAssist")
+    assert ANTIGRAVITY.matches("/v1internal/operations/onboarding")
+    assert ANTIGRAVITY.matches("/oauth2/v2/userinfo")
+    assert ANTIGRAVITY.matches("/oauth2/v3/tokeninfo?access_token=fake")
     assert ANTIGRAVITY.matches("/v1internal:streamGenerateContent?alt=sse")
     assert not ANTIGRAVITY.matches("/v1/internal")
     assert ANTIGRAVITY.captures("POST", "/v1internal:streamGenerateContent?alt=sse")
     assert not ANTIGRAVITY.captures("GET", "/v1internal:streamGenerateContent?alt=sse")
     assert not ANTIGRAVITY.captures("POST", "/v1internal:fetchAvailableModels")
+
+
+def test_antigravity_capture_only_bootstrap_responses_cover_auth_and_setup():
+    respond = ANTIGRAVITY.capture_only_bootstrap_response
+    assert respond is not None
+
+    user = respond("GET", "/oauth2/v2/userinfo", None)
+    assert user == {
+        "id": "claude-tap-capture",
+        "email": "capture@claude-tap.invalid",
+        "verified_email": True,
+        "name": "Claude Tap Capture",
+    }
+    load = respond("POST", "/v1internal:loadCodeAssist", {})
+    assert load["currentTier"]["id"] == "free-tier"
+    models = respond("POST", "/v1internal:fetchAvailableModels", {})
+    assert "MODEL_PLACEHOLDER_M50" in models["models"]
+    assert respond("GET", "/unrelated", None) is None
 
 
 def test_gemini_matches_versioned_paths():

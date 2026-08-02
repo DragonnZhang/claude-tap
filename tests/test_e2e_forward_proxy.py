@@ -29,7 +29,7 @@ from aiohttp import web
 from claude_tap.certs import CertificateAuthority, ensure_ca
 from claude_tap.forward_proxy import ForwardProxyServer
 from claude_tap.pipeline import ProxyContext
-from claude_tap.protocols import ANTHROPIC, CODEX_APP, OPENAI
+from claude_tap.protocols import ANTHROPIC, ANTIGRAVITY, CODEX_APP, OPENAI
 from claude_tap.trace import EventBus, JsonlSink
 
 pytestmark = pytest.mark.asyncio
@@ -257,6 +257,96 @@ async def test_forward_proxy_capture_only_records_without_upstream(trace_dir: Pa
     record = json.loads(lines[0])
     assert record["request"]["body"]["system"] == "system text"
     assert record["response"]["body"]["id"] == "msg_claude_tap_capture"
+
+
+async def test_forward_proxy_capture_only_records_chunked_request_body(trace_dir: Path):
+    cert_path, key_path = ensure_ca()
+    ca = CertificateAuthority(cert_path, key_path)
+
+    class FailingSession:
+        async def request(self, *args, **kwargs):
+            raise AssertionError("capture-only must not call upstream")
+
+    bus = EventBus()
+    jsonl_path = trace_dir / "trace.jsonl"
+    bus.subscribe(JsonlSink(jsonl_path))
+    ctx = ProxyContext(
+        protocols=(ANTHROPIC,),
+        target="https://api.anthropic.com",
+        bus=bus,
+        session=FailingSession(),  # type: ignore[arg-type]
+        capture_only=True,
+    )
+    proxy, proxy_port = await _start_proxy(ctx, ca)
+    payload = json.dumps({"model": "claude-test", "system": "chunked system", "messages": []}).encode()
+
+    async def chunks():
+        midpoint = len(payload) // 2
+        yield payload[:midpoint]
+        yield payload[midpoint:]
+
+    try:
+        client_ssl = ssl.create_default_context(cafile=str(cert_path))
+        client_connector = aiohttp.TCPConnector(ssl=client_ssl)
+        async with aiohttp.ClientSession(connector=client_connector) as client:
+            async with client.post(
+                "https://api.anthropic.com/v1/messages",
+                data=chunks(),
+                headers={"Content-Type": "application/json"},
+                proxy=f"http://127.0.0.1:{proxy_port}",
+            ) as resp:
+                assert resp.status == 200
+    finally:
+        await proxy.stop()
+        await bus.close_all()
+
+    record = json.loads(jsonl_path.read_text(encoding="utf-8"))
+    assert record["request"]["body"]["system"] == "chunked system"
+
+
+async def test_forward_proxy_capture_only_stubs_antigravity_bootstrap_without_recording(trace_dir: Path):
+    cert_path, key_path = ensure_ca()
+    ca = CertificateAuthority(cert_path, key_path)
+
+    class FailingSession:
+        async def request(self, *args, **kwargs):
+            raise AssertionError("capture-only bootstrap must not call upstream")
+
+    bus = EventBus()
+    jsonl_path = trace_dir / "trace.jsonl"
+    bus.subscribe(JsonlSink(jsonl_path))
+    ctx = ProxyContext(
+        protocols=(ANTIGRAVITY,),
+        target="https://daily-cloudcode-pa.googleapis.com",
+        bus=bus,
+        session=FailingSession(),  # type: ignore[arg-type]
+        capture_only=True,
+    )
+    proxy, proxy_port = await _start_proxy(ctx, ca)
+
+    try:
+        client_ssl = ssl.create_default_context(cafile=str(cert_path))
+        client_connector = aiohttp.TCPConnector(ssl=client_ssl)
+        async with aiohttp.ClientSession(connector=client_connector) as client:
+            async with client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                proxy=f"http://127.0.0.1:{proxy_port}",
+            ) as resp:
+                assert resp.status == 200
+                assert (await resp.json())["email"] == "capture@claude-tap.invalid"
+
+            async with client.post(
+                "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+                json={"metadata": {}},
+                proxy=f"http://127.0.0.1:{proxy_port}",
+            ) as resp:
+                assert resp.status == 200
+                assert (await resp.json())["currentTier"]["id"] == "free-tier"
+    finally:
+        await proxy.stop()
+        await bus.close_all()
+
+    assert jsonl_path.read_text(encoding="utf-8").strip() == ""
 
 
 async def test_forward_proxy_capture_only_streams_chat_completions(trace_dir: Path):

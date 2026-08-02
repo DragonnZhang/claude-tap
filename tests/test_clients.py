@@ -864,7 +864,7 @@ def test_env_redirect_reliable_matches_client_capability():
     so they default to forward mode instead. Devin is single-backend but its
     rustls binary does not honor our env redirect, so it also defaults to
     forward mode."""
-    for name in ("agy", "claude", "codex", "gemini", "cursor", "qoder", "openclaw"):
+    for name in ("claude", "codex", "gemini", "cursor", "qoder", "openclaw"):
         assert clients.get(name).env_redirect_reliable, name
-    for name in ("opencode", "pi", "omp", "kimi", "kimi-code", "mimo", "iflow", "hermes", "devin"):
+    for name in ("agy", "opencode", "pi", "omp", "kimi", "kimi-code", "mimo", "iflow", "hermes", "devin"):
         assert not clients.get(name).env_redirect_reliable, name

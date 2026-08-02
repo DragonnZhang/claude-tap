@@ -28,7 +28,7 @@ file whenever a client, protocol, default mode, or verification status changes.
 | Codex App | `codexapp` | forward | Codex App | app-server inherits proxy env | Verified |
 | Gemini CLI | `gemini` | reverse | Gemini | Google base URL env vars | Verified |
 | Grok Build | `grok` | reverse | OpenAI, passthrough | Grok endpoint env/config | Prompt-export verified |
-| Antigravity CLI | `agy` | reverse | Antigravity | `CLOUD_CODE_URL` | Wired |
+| Antigravity CLI | `agy` | forward | Antigravity | HTTPS proxy + local CA | Prompt-export verified |
 | OpenClaw | `openclaw` | reverse | Anthropic, OpenAI, Gemini, passthrough | patched OpenClaw config or provider env | Prompt-export verified |
 | opencode | `opencode` | forward | Anthropic, OpenAI, Gemini, passthrough | opencode provider config | Verified |
 | Kimi CLI | `kimi` | forward | Anthropic, OpenAI, Gemini, passthrough | Kimi TOML config | Prompt-export verified |
@@ -42,10 +42,9 @@ file whenever a client, protocol, default mode, or verification status changes.
 | Qoder CLI | `qoder` | reverse | passthrough | `QODER_CENTER_DOMAIN` | Wired |
 | Devin CLI | `devin` | forward | passthrough | fixed upstream/auth token | Wired |
 
-Antigravity is intentionally listed as `Wired`: the latest CLI seen during
-Phistory smoke testing started onboarding/setup calls but exited without a
-prompt-bearing generation request. Keep this as a real-product behavior note,
-not a compatibility hack in `claude-tap`.
+Antigravity uses forward mode because `CLOUD_CODE_URL` redirects generation
+calls but not the OAuth identity and Code Assist startup sequence. Capture-only
+satisfies that bootstrap locally before capturing the generation request.
 
 ## Routing Rules
 

@@ -36,6 +36,48 @@ from claude_tap.protocols import Protocol
 log = logging.getLogger("claude_tap")
 
 
+def _header(headers: dict[str, str], name: str) -> str | None:
+    target = name.lower()
+    return next((value for key, value in headers.items() if key.lower() == target), None)
+
+
+async def _read_chunked_body(reader: asyncio.StreamReader) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        size_line = await asyncio.wait_for(reader.readline(), timeout=60)
+        if not size_line:
+            raise asyncio.IncompleteReadError(b"".join(chunks), None)
+        size_text = size_line.strip().split(b";", 1)[0]
+        try:
+            size = int(size_text, 16)
+        except ValueError as exc:
+            raise ValueError(f"invalid HTTP chunk size: {size_text!r}") from exc
+        if size == 0:
+            while True:
+                trailer = await asyncio.wait_for(reader.readline(), timeout=60)
+                if trailer in (b"\r\n", b"\n", b""):
+                    return b"".join(chunks)
+        chunks.append(await asyncio.wait_for(reader.readexactly(size), timeout=60))
+        ending = await asyncio.wait_for(reader.readexactly(2), timeout=60)
+        if ending != b"\r\n":
+            raise ValueError("HTTP chunk is missing its CRLF terminator")
+
+
+async def _read_request_body(reader: asyncio.StreamReader, headers: dict[str, str]) -> bytes:
+    transfer_encoding = _header(headers, "Transfer-Encoding") or ""
+    if "chunked" in {item.strip().lower() for item in transfer_encoding.split(",")}:
+        return await _read_chunked_body(reader)
+
+    content_length = _header(headers, "Content-Length")
+    if content_length is None:
+        return b""
+    try:
+        length = int(content_length)
+    except ValueError as exc:
+        raise ValueError(f"invalid Content-Length: {content_length!r}") from exc
+    return await asyncio.wait_for(reader.readexactly(length), timeout=60)
+
+
 class ForwardProxyServer:
     def __init__(self, host: str, port: int, ca: CertificateAuthority, ctx: ProxyContext) -> None:
         self.host = host
@@ -199,13 +241,7 @@ class ForwardProxyServer:
                     k, v = hd.split(":", 1)
                     headers[k.strip()] = v.strip()
 
-            body = b""
-            cl = headers.get("Content-Length") or headers.get("content-length")
-            if cl:
-                try:
-                    body = await asyncio.wait_for(reader.readexactly(int(cl)), timeout=60)
-                except (ValueError, asyncio.IncompleteReadError, asyncio.TimeoutError):
-                    pass
+            body = await _read_request_body(reader, headers)
 
             protocol = self._ctx.protocol_for(path)
             if protocol is None:
@@ -246,6 +282,18 @@ class ForwardProxyServer:
             log.info("[Turn %d] -> %s %s (%s) model=%s stream=%s", turn, method, path, protocol.name, model, streaming)
         else:
             log.debug("relay-only -> %s %s (%s)", method, path, protocol.name)
+
+        if ctx.capture_only and not should_capture and protocol.capture_only_bootstrap_response is not None:
+            bootstrap_response = protocol.capture_only_bootstrap_response(method, path, req_body)
+            if bootstrap_response is not None:
+                body_bytes = json.dumps(bootstrap_response, separators=(",", ":")).encode()
+                client_writer.write(b"HTTP/1.1 200 OK\r\n")
+                client_writer.write(b"Content-Type: application/json\r\n")
+                client_writer.write(f"Content-Length: {len(body_bytes)}\r\n\r\n".encode())
+                client_writer.write(body_bytes)
+                await client_writer.drain()
+                log.debug("capture-only bootstrap response returned for %s %s", method, path)
+                return
 
         if ctx.capture_only and should_capture:
             stream_response = capture_only_stream_response(protocol, path, req_body) if streaming else None
@@ -461,13 +509,7 @@ class ForwardProxyServer:
                 k, v = decoded.split(":", 1)
                 headers[k.strip()] = v.strip()
 
-        body = b""
-        cl = headers.get("Content-Length") or headers.get("content-length")
-        if cl:
-            try:
-                body = await asyncio.wait_for(reader.readexactly(int(cl)), timeout=60)
-            except (ValueError, asyncio.IncompleteReadError, asyncio.TimeoutError):
-                pass
+        body = await _read_request_body(reader, headers)
 
         parsed = urlparse(url)
         path = parsed.path + (("?" + parsed.query) if parsed.query else "")
