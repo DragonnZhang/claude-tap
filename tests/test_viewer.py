@@ -31,12 +31,14 @@ def test_template_contains_inject_marker():
     assert INJECT_MARKER in _viewer_template_text()
 
 
-def test_nested_content_scrollers_allow_scroll_chaining():
-    """Long content must release wheel input to the detail pane at its edges."""
+def test_nested_content_scrollers_use_explicit_scroll_routing():
+    """Nested panes must expose scrollbars and route unused wheel distance."""
     template = _viewer_template_text()
 
-    assert "overscroll-behavior: contain" not in template
-    assert template.count("overscroll-behavior-y: auto") == 3
+    assert "overscroll-behavior: none" in template
+    assert "scrollbar-gutter: stable" in template
+    assert "function initNestedScrollRouting()" in template
+    assert "const remainder = delta - (innerEnd - innerStart)" in template
 
 
 def test_render_small_trace_inlines_data(trace_dir: Path, sample_anthropic_record: dict):

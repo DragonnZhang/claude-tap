@@ -26,7 +26,10 @@ def _render_long_xml_viewer(tmp_path: Path) -> Path:
             "body": {
                 "model": "claude-test",
                 "system": "\n".join(f"System prompt line {index}" for index in range(80)),
-                "messages": [{"role": "user", "content": xml}],
+                "messages": [
+                    {"role": "user", "content": xml},
+                    {"role": "user", "content": "Short message"},
+                ],
             },
         },
         "response": {
@@ -49,7 +52,7 @@ def _render_long_xml_viewer(tmp_path: Path) -> Path:
     return output
 
 
-def test_long_xml_releases_wheel_scroll_to_detail_at_boundaries(tmp_path: Path) -> None:
+def test_long_xml_distributes_wheel_input_without_scroll_traps(tmp_path: Path) -> None:
     output = _render_long_xml_viewer(tmp_path)
 
     with playwright.sync_playwright() as runtime:
@@ -64,10 +67,20 @@ def test_long_xml_releases_wheel_scroll_to_detail_at_boundaries(tmp_path: Path) 
         xml_block.scroll_into_view_if_needed()
         xml_block.hover()
 
+        # In the middle, the nested XML pane consumes the wheel input.
+        xml_block.evaluate("(element) => { element.scrollTop = 100; }")
+        xml_before = xml_block.evaluate("(element) => element.scrollTop")
+        detail_before_inner = page.locator("#detail").evaluate("(element) => element.scrollTop")
+        page.mouse.wheel(0, 120)
+        page.wait_for_timeout(50)
+        assert xml_block.evaluate("(element) => element.scrollTop") > xml_before
+        assert page.locator("#detail").evaluate("(element) => element.scrollTop") == detail_before_inner
+
+        # At the bottom, the same gesture immediately continues in detail.
         xml_block.evaluate("(element) => { element.scrollTop = element.scrollHeight; }")
         detail_before_down = page.locator("#detail").evaluate("(element) => element.scrollTop")
         page.mouse.wheel(0, 500)
-        page.wait_for_timeout(100)
+        page.wait_for_timeout(50)
         detail_after_down = page.locator("#detail").evaluate("(element) => element.scrollTop")
         assert detail_after_down > detail_before_down
 
@@ -76,9 +89,19 @@ def test_long_xml_releases_wheel_scroll_to_detail_at_boundaries(tmp_path: Path) 
             "(element) => { element.scrollTop = Math.max(element.scrollTop, 300); return element.scrollTop; }"
         )
         page.mouse.wheel(0, -500)
-        page.wait_for_timeout(100)
+        page.wait_for_timeout(50)
         detail_after_up = page.locator("#detail").evaluate("(element) => element.scrollTop")
         assert detail_after_up < detail_before_up
+
+        # A non-scrollable nested block must not rubber-band or swallow input.
+        short_block = page.locator(".content-block.text-block").filter(has_text="Short message")
+        short_block.scroll_into_view_if_needed()
+        short_block.hover()
+        assert short_block.evaluate("(element) => element.scrollHeight <= element.clientHeight + 1")
+        detail_before_short = page.locator("#detail").evaluate("(element) => element.scrollTop")
+        page.mouse.wheel(0, 160)
+        page.wait_for_timeout(50)
+        assert page.locator("#detail").evaluate("(element) => element.scrollTop") > detail_before_short
 
         browser.close()
 
