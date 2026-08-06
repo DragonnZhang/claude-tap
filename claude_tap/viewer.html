@@ -385,6 +385,37 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
   max-height: 500px; overflow-y: auto;
 }
 
+/* Nested trace content uses a consistent, visible scrollbar. Wheel input is
+   routed in JS so these panes consume only the distance they can scroll and
+   immediately hand the remainder to the detail pane. Disabling native
+   overscroll also removes the rubber-band effect from non-scrollable blocks. */
+.section-body pre, .section-body .pre-text,
+.msg pre, .msg .pre-text,
+.content-block.text-block,
+.tool-block-body,
+.md-view-md,
+.json-host {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  overscroll-behavior: none;
+}
+.section-body pre::-webkit-scrollbar, .section-body .pre-text::-webkit-scrollbar,
+.msg pre::-webkit-scrollbar, .msg .pre-text::-webkit-scrollbar,
+.content-block.text-block::-webkit-scrollbar,
+.tool-block-body::-webkit-scrollbar,
+.md-view-md::-webkit-scrollbar,
+.json-host::-webkit-scrollbar { width: 8px; height: 8px; }
+.section-body pre::-webkit-scrollbar-thumb, .section-body .pre-text::-webkit-scrollbar-thumb,
+.msg pre::-webkit-scrollbar-thumb, .msg .pre-text::-webkit-scrollbar-thumb,
+.content-block.text-block::-webkit-scrollbar-thumb,
+.tool-block-body::-webkit-scrollbar-thumb,
+.md-view-md::-webkit-scrollbar-thumb,
+.json-host::-webkit-scrollbar-thumb {
+  background: var(--border); border: 2px solid transparent;
+  border-radius: 8px; background-clip: padding-box;
+}
+
 /* ─── Messages ─── */
 .msg {
   margin-bottom: 8px; border-radius: var(--radius-sm);
@@ -414,9 +445,6 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .content-block:first-child { margin-top: 0; }
 .content-block.text-block {
   max-height: min(55vh, 480px); overflow-y: auto;
-  /* Let wheel and trackpad input continue into the detail pane when this
-     nested scroller reaches either boundary. */
-  overscroll-behavior-y: auto;
 }
 .msg.reasoning-only { padding: 8px 12px; }
 .reasoning-placeholder-row { display: flex; align-items: center; gap: 8px; margin: 0; }
@@ -477,7 +505,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .tb-desc { color: var(--text-tertiary); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .tool-block-body {
   display: none; padding: 10px 12px 12px; border-top: 1px solid var(--border-light); font-size: 12px;
-  max-height: min(60vh, 520px); overflow: auto; overscroll-behavior-y: auto;
+  max-height: min(60vh, 520px); overflow: auto;
 }
 .tool-block-body.open { display: block; }
 .tb-full-desc {
@@ -544,7 +572,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); heig
 .md-tab.active { background: var(--bg-card); color: var(--text); font-weight: 600; }
 .md-host[data-mode="raw"] .md-view-md { display: none; }
 .md-host[data-mode="md"]  .md-view-raw { display: none; }
-.md-view-md { max-height: 500px; overflow: auto; overscroll-behavior-y: auto; }
+.md-view-md { max-height: 500px; overflow: auto; }
 .md-body { line-height: 1.55; font-size: 13px; color: var(--text); }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4 { margin: 12px 0 6px; line-height: 1.3; }
 .md-body h1 { font-size: 18px; }
@@ -2051,7 +2079,7 @@ function updateLiveStatus(forcedStatus) {
      4. None of the above → user opened the HTML directly; show drop zone
    ========================================================================= */
 
-function bootCommon() { initTheme(); initLang(); initGlobalSearch(); initToolFilterEvents(); initBackToTop(); initShortcuts(); initHashRouting(); }
+function bootCommon() { initTheme(); initLang(); initGlobalSearch(); initToolFilterEvents(); initBackToTop(); initNestedScrollRouting(); initShortcuts(); initHashRouting(); }
 
 // Global keyboard shortcuts.
 // ``/`` focuses the sidebar search box; ``Esc`` clears + blurs it. We
@@ -2109,6 +2137,52 @@ function initBackToTop() {
 function scrollDetailToTop() {
   const detail = document.getElementById('detail');
   if (detail) detail.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+const NESTED_SCROLL_SELECTOR = [
+  '.section-body pre', '.section-body .pre-text',
+  '.msg pre', '.msg .pre-text', '.content-block.text-block',
+  '.tool-block-body', '.md-view-md', '.json-host',
+].join(',');
+
+// Browsers do not consistently chain high-resolution trackpad input from a
+// nested overflow pane to its parent, especially during momentum scrolling.
+// Distribute each wheel delta explicitly: the inner pane consumes what it can
+// and the detail pane receives the rest in the same event. Event delegation
+// also covers content rendered after startup.
+function initNestedScrollRouting() {
+  const detail = document.getElementById('detail');
+  if (!detail) return;
+  detail.addEventListener('wheel', event => {
+    if (isMobile() || event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    let node = event.target instanceof Element ? event.target : null;
+    let fallback = null, scroller = null;
+    while (node && node !== detail) {
+      if (node.matches(NESTED_SCROLL_SELECTOR)) {
+        fallback ||= node;
+        if (node.scrollHeight > node.clientHeight + 1) { scroller = node; break; }
+      }
+      node = node.parentElement;
+    }
+    scroller ||= fallback;
+    if (!scroller) return;
+
+    const scale = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? detail.clientHeight : 1;
+    const delta = event.deltaY * scale;
+    const innerMax = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const detailMax = Math.max(0, detail.scrollHeight - detail.clientHeight);
+    const innerStart = scroller.scrollTop;
+    const innerEnd = Math.min(innerMax, Math.max(0, innerStart + delta));
+    const remainder = delta - (innerEnd - innerStart);
+
+    event.preventDefault();
+    scroller.scrollTop = innerEnd;
+    if (Math.abs(remainder) > 0.01) {
+      detail.scrollTop = Math.min(detailMax, Math.max(0, detail.scrollTop + remainder));
+    }
+  }, { passive: false });
 }
 
 function bootRenderEmbedded() { bootCommon(); renderApp(); autoSelectFirst(); }
