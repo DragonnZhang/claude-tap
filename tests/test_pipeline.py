@@ -22,7 +22,7 @@ from claude_tap.pipeline import (
     parse_json_body,
     reassemble_event_stream_body,
 )
-from claude_tap.protocols import ANTHROPIC, OPENAI
+from claude_tap.protocols import ANTHROPIC, GEMINI, OPENAI
 
 # --- build_upstream_url (delegates to protocol.rewrite_upstream_path) -----
 
@@ -145,10 +145,43 @@ def test_capture_only_stream_response_returns_responses_api_events():
     assert body["usage"]["output_tokens_details"]["reasoning_tokens"] == 0
     assert [event["data"]["type"] for event in events] == [
         "response.created",
+        "response.output_item.added",
         "response.output_text.delta",
+        "response.output_item.done",
         "response.completed",
     ]
     assert b'"type":"response.completed"' in raw
+
+
+def test_capture_only_stream_response_returns_anthropic_events():
+    response = capture_only_stream_response(ANTHROPIC, "/v1/messages", {"model": "claude-test"})
+
+    assert response is not None
+    body, events, raw = response
+    assert body["content"][0]["text"] == "captured"
+    assert [event["data"]["type"] for event in events] == [
+        "message_start",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+    ]
+    assert b"event: content_block_delta" in raw
+
+
+def test_capture_only_stream_response_returns_gemini_event():
+    response = capture_only_stream_response(
+        GEMINI,
+        "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+        {},
+    )
+
+    assert response is not None
+    body, events, raw = response
+    assert body["candidates"][0]["content"]["parts"][0]["text"] == "captured"
+    assert events == [{"event": "message", "data": body}]
+    assert raw.startswith(b"data: {")
 
 
 # --- build_record ----------------------------------------------------------

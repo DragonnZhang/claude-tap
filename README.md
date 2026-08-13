@@ -6,7 +6,7 @@
 
 Trace what AI coding CLIs actually send to their model APIs.
 
-`claude-tap` runs tools like Claude Code, Codex CLI, Gemini CLI, Grok Build,
+`claude-tap` runs tools like Claude Code, Codex CLI, DeepSeek Harness, Gemini CLI, Grok Build,
 MiniMax Code, Antigravity CLI, Kimi Code, MiMo Code, OpenClaw, opencode, Pi, and Oh My Pi
 through a local proxy. It records requests, streaming responses, tools, token
 usage, and system prompts, then renders the run as a self-contained HTML trace.
@@ -59,6 +59,7 @@ Prefix the AI CLI command with `claude-tap`:
 ```bash
 claude-tap claude -- -p "What is 2+2?"
 claude-tap codex -- exec "Say hi"
+claude-tap dsh -- --profile headless "Say hi"
 claude-tap gemini -- -p "Explain async/await"
 claude-tap grok -- --single "Explain async/await"
 claude-tap kimi-code -- --prompt "Say hi"
@@ -94,6 +95,7 @@ For prompt-history tools, you usually do not need the whole viewer. Use
 ```bash
 claude-tap run claude --export-prompt claude.prompt.md --no-open -- -p hi
 claude-tap run codex --export-prompt codex.prompt.md --no-open -- exec "hi"
+claude-tap run dsh --export-prompt dsh.prompt.md --no-open -- --profile headless "hi"
 claude-tap run gemini --export-prompt gemini.prompt.md --no-open -- -p hi
 claude-tap run grok --export-prompt grok.prompt.md --no-open -- --single hi
 claude-tap run agy --export-prompt antigravity.prompt.md --no-open -- --print hi --dangerously-skip-permissions
@@ -128,6 +130,7 @@ CLIs; it does not install those CLIs for you.
 | Claude Code | `claude-tap claude` | reverse | verified |
 | Codex CLI | `claude-tap codex` | reverse | verified |
 | Codex App | `claude-tap codexapp` | forward | verified |
+| DeepSeek Harness | `claude-tap dsh` | forward | prompt-export verified |
 | Gemini CLI | `claude-tap gemini` | reverse | verified |
 | Grok Build | `claude-tap grok` | reverse | prompt-export verified |
 | MiniMax Code | `claude-tap minimax-code` | reverse | prompt-export verified¹ |
@@ -164,7 +167,7 @@ It uses two interception modes:
 | Mode | Used for | How |
 | --- | --- | --- |
 | reverse | Claude Code, Codex, Gemini, Grok Build, MiniMax Code, OpenClaw, Cursor, Qoder | set a base URL, CLI flag, or temporary child config so the CLI calls `127.0.0.1` |
-| forward | Codex App, Antigravity, opencode, Kimi, Kimi Code, MiMo, Pi, Oh My Pi, Hermes, iFlow, Devin | set `HTTPS_PROXY` and use a local CA to intercept HTTPS |
+| forward | Codex App, DeepSeek Harness, Antigravity, opencode, Kimi, Kimi Code, MiMo, Pi, Oh My Pi, Hermes, iFlow, Devin | set `HTTPS_PROXY` and use a local CA to intercept HTTPS |
 
 In both modes, `claude-tap` tries to preserve your real upstream. If your CLI
 already uses a private relay or regional endpoint, `claude-tap` forwards there

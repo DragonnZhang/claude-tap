@@ -4,7 +4,7 @@
 
 追踪 AI 编程 CLI 实际发给模型 API 的内容。
 
-`claude-tap` 会把 Claude Code、Codex CLI、Gemini CLI、Grok Build、
+`claude-tap` 会把 Claude Code、Codex CLI、DeepSeek Harness、Gemini CLI、Grok Build、
 MiniMax Code、Antigravity CLI、Kimi Code、MiMo Code、OpenClaw、opencode、Pi、Oh My Pi 等工具
 放到本地代理后面运行，记录请求、流式响应、工具列表、token 用量和 system prompt，
 并生成一个可以直接打开的 HTML trace。
@@ -55,6 +55,7 @@ uv tool upgrade claude-tap
 ```bash
 claude-tap claude -- -p "What is 2+2?"
 claude-tap codex -- exec "Say hi"
+claude-tap dsh -- --profile headless "Say hi"
 claude-tap gemini -- -p "Explain async/await"
 claude-tap grok -- --single "Explain async/await"
 claude-tap kimi-code -- --prompt "Say hi"
@@ -89,6 +90,7 @@ claude-tap -L claude -- -p "Explain async/await"
 ```bash
 claude-tap run claude --export-prompt claude.prompt.md --no-open -- -p hi
 claude-tap run codex --export-prompt codex.prompt.md --no-open -- exec "hi"
+claude-tap run dsh --export-prompt dsh.prompt.md --no-open -- --profile headless "hi"
 claude-tap run gemini --export-prompt gemini.prompt.md --no-open -- -p hi
 claude-tap run grok --export-prompt grok.prompt.md --no-open -- --single hi
 claude-tap run agy --export-prompt antigravity.prompt.md --no-open -- --print hi --dangerously-skip-permissions
@@ -120,6 +122,7 @@ claude-tap export ./.traces/2026-05-06/trace_120137.jsonl --format prompt-md -o 
 | Claude Code | `claude-tap claude` | reverse | verified |
 | Codex CLI | `claude-tap codex` | reverse | verified |
 | Codex App | `claude-tap codexapp` | forward | verified |
+| DeepSeek Harness | `claude-tap dsh` | forward | prompt-export verified |
 | Gemini CLI | `claude-tap gemini` | reverse | verified |
 | Grok Build | `claude-tap grok` | reverse | prompt-export verified |
 | MiniMax Code | `claude-tap minimax-code` | reverse | prompt-export verified¹ |
@@ -153,7 +156,7 @@ capture-only 模式下发出过包含 prompt 的请求。`wired` 表示代码路
 | 模式 | 用于 | 做法 |
 | --- | --- | --- |
 | reverse | Claude Code、Codex、Gemini、Grok Build、MiniMax Code、OpenClaw、Cursor、Qoder | 设置 base URL、CLI 参数或临时子进程配置，让 CLI 请求 `127.0.0.1` |
-| forward | Codex App、Antigravity、opencode、Kimi、Kimi Code、MiMo、Pi、Oh My Pi、Hermes、iFlow、Devin | 设置 `HTTPS_PROXY`，并用本地 CA 拦截 HTTPS |
+| forward | Codex App、DeepSeek Harness、Antigravity、opencode、Kimi、Kimi Code、MiMo、Pi、Oh My Pi、Hermes、iFlow、Devin | 设置 `HTTPS_PROXY`，并用本地 CA 拦截 HTTPS |
 
 两种模式都会尽量保留你原本配置的真实 upstream。如果你的 CLI 本来就走私有 relay 或区域 endpoint，
 `claude-tap` 会继续转发到那里，而不是偷偷换成官方默认地址。

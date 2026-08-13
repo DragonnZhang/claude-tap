@@ -47,6 +47,9 @@ def _install_forward_proxy_env(env: dict[str, str], proxy_url: str, ca_cert_path
 
     for k in _PROXY_ENV_VARS:
         env[k] = proxy_url
+    # Node's built-in fetch only reads the proxy environment when this opt-in
+    # is set. Unsupported Node releases ignore the variable.
+    env["NODE_USE_ENV_PROXY"] = "1"
     env["NO_PROXY"] = "127.0.0.1,localhost"
     if ca_cert_path:
         ca = str(ca_cert_path)
