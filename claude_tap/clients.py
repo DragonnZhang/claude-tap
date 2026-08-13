@@ -500,6 +500,50 @@ def _minimax_code_configured(env: Mapping[str, str]) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# DeepSeek Harness — the native DeepSeek provider appends
+# ``/chat/completions`` to ``DEEPSEEK_BASE_URL``. Users can also select
+# OpenAI Responses, Anthropic Messages, and other pi-ai catalog providers
+# through ``$DSH_HOME/settings.yaml``.
+# ---------------------------------------------------------------------------
+
+
+def _dsh_env(proxy_url: str) -> dict[str, str]:
+    return {"DEEPSEEK_BASE_URL": proxy_url}
+
+
+def _dsh_configured(env: Mapping[str, str]) -> str | None:
+    return _strip_url(env.get("DEEPSEEK_BASE_URL"))
+
+
+def _dsh_home(env: Mapping[str, str]) -> Path:
+    return Path(env.get("DSH_HOME") or Path.home() / ".dsh").expanduser()
+
+
+def _dsh_auth() -> AuthInfo:
+    for var, target in (
+        ("DEEPSEEK_API_KEY", "https://api.deepseek.com"),
+        ("OPENAI_API_KEY", OPENAI.default_target),
+        ("ANTHROPIC_API_KEY", ANTHROPIC.default_target),
+        ("GEMINI_API_KEY", GEMINI.default_target),
+    ):
+        if os.environ.get(var):
+            return AuthInfo(logged_in=True, mode="apikey", detail=f"{var} env var", suggested_target=target)
+    if (_dsh_home(os.environ) / ".credentials.yaml").is_file():
+        return AuthInfo(
+            logged_in=True,
+            mode="unknown",
+            detail="DeepSeek Harness managed credentials",
+            suggested_target="https://api.deepseek.com",
+        )
+    return AuthInfo(
+        logged_in=False,
+        mode="unknown",
+        detail="no known credentials found (configure a provider in DeepSeek Harness or export its API key)",
+        suggested_target="https://api.deepseek.com",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Antigravity CLI — Google Code Assist internal API. The model request uses
 # a Gemini-shaped body nested under ``request``.
 # ---------------------------------------------------------------------------
@@ -1396,6 +1440,20 @@ MINIMAX_CODE = Client(
 )
 
 
+DSH = Client(
+    name="dsh",
+    cmd="dsh",
+    label="DeepSeek Harness",
+    install_url="https://github.com/deepseek-ai/deepseek-harness",
+    protocols=(OPENAI, ANTHROPIC, GEMINI, PASSTHROUGH),
+    env_overrides=_dsh_env,
+    read_configured_upstream=_dsh_configured,
+    env_redirect_reliable=False,
+    detect_auth=_dsh_auth,
+    warn_on_missing_yolo=False,
+)
+
+
 ANTIGRAVITY_CLI = Client(
     name="agy",
     cmd="agy",
@@ -1605,6 +1663,7 @@ _REGISTRY: dict[str, Client] = {
         GEMINI_CLI,
         GROK,
         MINIMAX_CODE,
+        DSH,
         OPENCODE,
         PI,
         OMP,

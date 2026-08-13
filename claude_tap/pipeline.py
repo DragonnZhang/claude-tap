@@ -189,6 +189,56 @@ def capture_only_stream_response(
     protocol: Protocol, path: str, req_body: object
 ) -> tuple[dict, list[dict], bytes] | None:
     resp_body = capture_only_response(protocol, path, req_body)
+    if protocol.name == "anthropic":
+        model = resp_body.get("model", "claude-tap-capture")
+        events = [
+            {
+                "event": "message_start",
+                "data": {
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg_claude_tap_capture",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": model,
+                        "content": [],
+                        "stop_reason": None,
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 0, "output_tokens": 0},
+                    },
+                },
+            },
+            {
+                "event": "content_block_start",
+                "data": {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            },
+            {
+                "event": "content_block_delta",
+                "data": {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "captured"},
+                },
+            },
+            {"event": "content_block_stop", "data": {"type": "content_block_stop", "index": 0}},
+            {
+                "event": "message_delta",
+                "data": {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                    "usage": {"output_tokens": 0},
+                },
+            },
+            {"event": "message_stop", "data": {"type": "message_stop"}},
+        ]
+        return resp_body, events, _sse_bytes(events)
+    if protocol.name in ("gemini", "antigravity"):
+        events = [{"event": "message", "data": resp_body}]
+        return resp_body, events, _sse_bytes(events)
     if protocol.name == "openai" and "chat/completions" in path:
         model = resp_body.get("model", "claude-tap-capture")
         chunk_id = resp_body.get("id", "chatcmpl_claude_tap_capture")
@@ -213,20 +263,45 @@ def capture_only_stream_response(
         return resp_body, events, _sse_bytes(events)
     if protocol.name == "openai" and path.split("?", 1)[0].rstrip("/").endswith("/responses"):
         in_progress = {**resp_body, "status": "in_progress", "output": []}
+        output_item = resp_body["output"][0]
         events = [
-            {"event": "message", "data": {"type": "response.created", "sequence_number": 0, "response": in_progress}},
             {
-                "event": "message",
+                "event": "response.created",
+                "data": {"type": "response.created", "sequence_number": 0, "response": in_progress},
+            },
+            {
+                "event": "response.output_item.added",
+                "data": {
+                    "type": "response.output_item.added",
+                    "sequence_number": 1,
+                    "output_index": 0,
+                    "item": {**output_item, "status": "in_progress", "content": []},
+                },
+            },
+            {
+                "event": "response.output_text.delta",
                 "data": {
                     "type": "response.output_text.delta",
-                    "sequence_number": 1,
+                    "sequence_number": 2,
                     "item_id": "msg_claude_tap_capture",
                     "output_index": 0,
                     "content_index": 0,
                     "delta": "captured",
                 },
             },
-            {"event": "message", "data": {"type": "response.completed", "sequence_number": 2, "response": resp_body}},
+            {
+                "event": "response.output_item.done",
+                "data": {
+                    "type": "response.output_item.done",
+                    "sequence_number": 3,
+                    "output_index": 0,
+                    "item": output_item,
+                },
+            },
+            {
+                "event": "response.completed",
+                "data": {"type": "response.completed", "sequence_number": 4, "response": resp_body},
+            },
         ]
         return resp_body, events, _sse_bytes(events)
     return None

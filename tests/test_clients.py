@@ -43,6 +43,9 @@ def fake_home(tmp_path: Path, monkeypatch) -> Path:
         "GROK_HOME",
         "GROK_XAI_API_BASE_URL",
         "GROK_CLI_CHAT_PROXY_BASE_URL",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "DSH_HOME",
     ):
         monkeypatch.delenv(v, raising=False)
     return tmp_path
@@ -59,6 +62,7 @@ def test_registry_lists_known_clients():
         "codexapp",
         "cursor",
         "devin",
+        "dsh",
         "gemini",
         "grok",
         "hermes",
@@ -129,6 +133,11 @@ def test_grok_env_redirects_api_and_auxiliary_requests():
 def test_minimax_code_env_redirects_local_runtime_provider():
     env = clients.get("minimax-code").env_overrides("http://127.0.0.1:8080")
     assert env == {"MINIMAX_CODE_BASE_URL": "http://127.0.0.1:8080"}
+
+
+def test_dsh_env_redirects_deepseek_adapter():
+    env = clients.get("dsh").env_overrides("http://127.0.0.1:8080")
+    assert env == {"DEEPSEEK_BASE_URL": "http://127.0.0.1:8080"}
 
 
 def test_antigravity_env_uses_cloud_code_url():
@@ -259,7 +268,7 @@ def test_single_protocol_clients():
 
 
 def test_multi_backend_clients_advertise_three_protocols():
-    for name in ("opencode", "pi", "omp", "kimi", "kimi-code", "mimo", "iflow", "hermes", "openclaw"):
+    for name in ("dsh", "opencode", "pi", "omp", "kimi", "kimi-code", "mimo", "iflow", "hermes", "openclaw"):
         names = sorted(p.name for p in clients.get(name).protocols)
         assert {"anthropic", "openai", "gemini"}.issubset(set(names)), name
 
@@ -286,6 +295,7 @@ def test_yolo_args_match_each_cli_published_flag():
         "hermes": ("--yolo",),
         "openclaw": (),  # no global auto-approve flag on `openclaw agent`
         "devin": ("--permission-mode", "dangerous"),
+        "dsh": (),
         "pi": (),  # no single-flag yolo; runner prints a note instead
         "omp": ("--approval-mode", "yolo"),
     }
@@ -330,6 +340,11 @@ def test_claude_configured_reads_anthropic_base_url():
 
 def test_claude_configured_returns_none_when_unset():
     assert clients.get("claude").read_configured_upstream({}) is None
+
+
+def test_dsh_configured_reads_deepseek_base_url():
+    configured = clients.get("dsh").read_configured_upstream({"DEEPSEEK_BASE_URL": "https://relay.example.com/"})
+    assert configured == "https://relay.example.com"
 
 
 def test_codex_configured_reads_active_provider_base_url(fake_home: Path):
@@ -784,6 +799,34 @@ def test_gemini_apikey_env(fake_home: Path, monkeypatch):
     assert info.suggested_target == "https://generativelanguage.googleapis.com"
 
 
+def test_dsh_apikey_env(fake_home: Path, monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    info = clients.get("dsh").detect_auth()
+    assert info.logged_in
+    assert info.mode == "apikey"
+    assert info.suggested_target == "https://api.deepseek.com"
+
+
+def test_dsh_detects_alternate_provider_key(fake_home: Path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    info = clients.get("dsh").detect_auth()
+    assert info.logged_in
+    assert info.detail == "ANTHROPIC_API_KEY env var"
+    assert info.suggested_target == "https://api.anthropic.com"
+
+
+def test_dsh_detects_managed_credentials(fake_home: Path, monkeypatch):
+    dsh_home = fake_home / "custom-dsh"
+    dsh_home.mkdir()
+    (dsh_home / ".credentials.yaml").write_text("DSH_TEST_KEY: test\n", encoding="utf-8")
+    monkeypatch.setenv("DSH_HOME", str(dsh_home))
+
+    info = clients.get("dsh").detect_auth()
+
+    assert info.logged_in
+    assert info.detail == "DeepSeek Harness managed credentials"
+
+
 def test_grok_auth_uses_api_target_for_api_key(fake_home: Path, monkeypatch):
     monkeypatch.setenv("XAI_API_KEY", "xai-test")
     info = clients.get("grok").detect_auth()
@@ -835,6 +878,7 @@ def test_other_clients_have_no_purge_list():
         "cursor",
         "qoder",
         "devin",
+        "dsh",
         "hermes",
         "openclaw",
     ):
@@ -858,7 +902,7 @@ def test_proprietary_client_auth_detect_messages_are_actionable():
 
 
 def test_is_multi_backend_for_multi_protocol_clients():
-    for name in ("opencode", "pi", "omp", "kimi", "kimi-code", "mimo", "iflow", "hermes", "openclaw"):
+    for name in ("dsh", "opencode", "pi", "omp", "kimi", "kimi-code", "mimo", "iflow", "hermes", "openclaw"):
         assert clients.is_multi_backend(clients.get(name)), name
 
 
@@ -875,5 +919,5 @@ def test_env_redirect_reliable_matches_client_capability():
     forward mode."""
     for name in ("claude", "codex", "gemini", "minimax-code", "cursor", "qoder", "openclaw"):
         assert clients.get(name).env_redirect_reliable, name
-    for name in ("agy", "opencode", "pi", "omp", "kimi", "kimi-code", "mimo", "iflow", "hermes", "devin"):
+    for name in ("agy", "dsh", "opencode", "pi", "omp", "kimi", "kimi-code", "mimo", "iflow", "hermes", "devin"):
         assert not clients.get(name).env_redirect_reliable, name

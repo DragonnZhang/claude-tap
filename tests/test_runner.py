@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from claude_tap.cli import _export_prompt_from_trace
-from claude_tap.clients import CODEX_APP_CLIENT, GEMINI_CLI, OPENCLAW, OPENCODE
+from claude_tap.clients import CODEX_APP_CLIENT, DSH, GEMINI_CLI, OPENCLAW, OPENCODE
 from claude_tap.runner import _resolve_client_command, run_client
 
 
@@ -129,6 +129,46 @@ async def test_yolo_args_can_be_inserted_after_client_subcommand(monkeypatch):
 
     assert rc == 0
     assert captured["cmd"][:3] == ("opencode", "run", "--dangerously-skip-permissions")
+
+
+@pytest.mark.asyncio
+async def test_forward_mode_enables_node_environment_proxy(monkeypatch):
+    captured: dict = {}
+
+    class FakeProc:
+        returncode = None
+        pid = 12345
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+        def terminate(self) -> None:
+            self.returncode = 143
+
+        def kill(self) -> None:
+            self.returncode = 137
+
+    async def fake_create_subprocess_exec(*_cmd, **kwargs):
+        captured["env"] = kwargs["env"]
+        return FakeProc()
+
+    monkeypatch.setattr("claude_tap.runner.shutil.which", lambda _cmd: "/usr/bin/dsh")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    rc = await run_client(
+        client=DSH,
+        proxy_port=1234,
+        proxy_host="127.0.0.1",
+        forward_args=["--profile", "headless", "hi"],
+        proxy_mode="forward",
+        yolo=False,
+    )
+
+    assert rc == 0
+    env = captured["env"]
+    assert env["HTTPS_PROXY"] == "http://127.0.0.1:1234"
+    assert env["NODE_USE_ENV_PROXY"] == "1"
 
 
 @pytest.mark.asyncio
