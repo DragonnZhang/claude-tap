@@ -7,7 +7,7 @@
 Trace what AI coding CLIs actually send to their model APIs.
 
 `claude-tap` runs tools like Claude Code, Codex CLI, DeepSeek Harness, Gemini CLI, Grok Build,
-MiniMax Code, Antigravity CLI, Kimi Code, MiMo Code, OpenClaw, opencode, Pi, and Oh My Pi
+MiniMax Code, Antigravity CLI, Kimi Code, Qwen Code, Qoder CLI, MiMo Code, OpenClaw, opencode, Pi, and Oh My Pi
 through a local proxy. It records requests, streaming responses, tools, token
 usage, and system prompts, then renders the run as a self-contained HTML trace.
 
@@ -145,6 +145,7 @@ CLIs; it does not install those CLIs for you.
 | Hermes Agent | `claude-tap hermes` | forward | prompt-export verified |
 | iFlow CLI | `claude-tap iflow` | forward | verified |
 | Cursor Agent | `claude-tap cursor` | reverse | wired |
+| Qwen Code | `claude-tap qwen` | reverse | prompt-export verified |
 | Qoder CLI | `claude-tap qoder` | reverse | wired |
 | Devin CLI | `claude-tap devin` | forward | wired |
 
@@ -166,7 +167,7 @@ It uses two interception modes:
 
 | Mode | Used for | How |
 | --- | --- | --- |
-| reverse | Claude Code, Codex, Gemini, Grok Build, MiniMax Code, OpenClaw, Cursor, Qoder | set a base URL, CLI flag, or temporary child config so the CLI calls `127.0.0.1` |
+| reverse | Claude Code, Codex, Gemini, Grok Build, MiniMax Code, Qwen Code, OpenClaw, Cursor, Qoder | set a base URL, CLI flag, or temporary child config so the CLI calls `127.0.0.1` |
 | forward | Codex App, DeepSeek Harness, Antigravity, opencode, Kimi, Kimi Code, MiMo, Pi, Oh My Pi, Hermes, iFlow, Devin | set `HTTPS_PROXY` and use a local CA to intercept HTTPS |
 
 In both modes, `claude-tap` tries to preserve your real upstream. If your CLI
