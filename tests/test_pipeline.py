@@ -12,6 +12,7 @@ import pytest
 from claude_tap import pipeline
 from claude_tap.pipeline import (
     HOP_BY_HOP,
+    apply_header_overrides,
     build_http_record,
     build_upstream_url,
     build_ws_record,
@@ -71,6 +72,13 @@ def test_hop_by_hop_set_is_lower_case():
     """Regression guard: matching is done after .lower()."""
     assert "connection" in HOP_BY_HOP
     assert "Connection" not in HOP_BY_HOP
+
+
+def test_apply_header_overrides_replaces_case_insensitively():
+    assert apply_header_overrides(
+        {"cosy-version": "0.1.48", "X-Custom": "kept"},
+        {"Cosy-Version": "0.2.8"},
+    ) == {"Cosy-Version": "0.2.8", "X-Custom": "kept"}
 
 
 # --- parse_json_body / decompress -----------------------------------------

@@ -23,6 +23,7 @@ from claude_tap.certs import CertificateAuthority
 from claude_tap.pipeline import (
     HOP_BY_HOP,
     ProxyContext,
+    apply_header_overrides,
     build_http_record,
     capture_only_response,
     capture_only_stream_response,
@@ -329,7 +330,7 @@ class ForwardProxyServer:
             log.info("[Turn %d] capture-only response returned; upstream skipped", turn)
             return
 
-        fwd = filter_headers(headers)
+        fwd = apply_header_overrides(filter_headers(headers), ctx.upstream_header_overrides)
         fwd.pop("Host", None)
         fwd.pop("host", None)
         fwd["Accept-Encoding"] = "identity"

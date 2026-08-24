@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import signal
 import sys
 import threading
@@ -53,6 +54,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(line_buffering=True)
 
 SUBCOMMANDS = {"run", "proxy", "live", "export", "update", "ca"}
+_QODER_VERSION_RE = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\Z")
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +118,19 @@ def resolve_target_and_mode(
         mode = "reverse"
 
     return target, target_source, mode
+
+
+def _upstream_header_overrides(
+    client: clients_mod.Client | None, env: "os._Environ[str] | dict[str, str]"
+) -> dict[str, str]:
+    if client is None or client.name != "qoder":
+        return {}
+    version = env.get("CLAUDE_TAP_QODER_COMPAT_VERSION", "").strip()
+    if not version:
+        return {}
+    if _QODER_VERSION_RE.fullmatch(version) is None:
+        raise ValueError("CLAUDE_TAP_QODER_COMPAT_VERSION must be a semantic version")
+    return {"Cosy-Version": version}
 
 
 def _resolve_live_default(args: argparse.Namespace) -> bool:
@@ -478,7 +493,14 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
     ca_cert_path: Path | None = None
 
     capture_only = bool(launch_client and getattr(args, "export_prompt", None))
-    ctx = ProxyContext(protocols=protocols, target=target, bus=bus, session=session, capture_only=capture_only)
+    ctx = ProxyContext(
+        protocols=protocols,
+        target=target,
+        bus=bus,
+        session=session,
+        capture_only=capture_only,
+        upstream_header_overrides=_upstream_header_overrides(client, os.environ),
+    )
     qoder_capture_dir: TemporaryDirectory[str] | None = None
     qoder_capture_path: Path | None = None
     if capture_only and client is not None and client.name == "qoder":

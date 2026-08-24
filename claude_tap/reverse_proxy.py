@@ -23,6 +23,7 @@ from yarl import URL
 from claude_tap.pipeline import (
     HOP_BY_HOP,
     ProxyContext,
+    apply_header_overrides,
     build_upstream_url,
     capture_only_response,
     capture_only_stream_response,
@@ -83,7 +84,7 @@ async def _handle_http(
     upstream_url = build_upstream_url(ctx.target, request.path_qs, protocol)
     body = await request.read()
 
-    fwd_headers = filter_headers(request.headers)
+    fwd_headers = apply_header_overrides(filter_headers(request.headers), ctx.upstream_header_overrides)
     fwd_headers.pop("Host", None)
     if request.headers.get("Content-Encoding", "").lower() in ("zstd", "gzip", "deflate", "br"):
         for key in list(fwd_headers):

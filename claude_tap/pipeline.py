@@ -51,6 +51,7 @@ class ProxyContext:
     bus: EventBus
     session: aiohttp.ClientSession
     capture_only: bool = False
+    upstream_header_overrides: dict[str, str] = field(default_factory=dict)
     turn_counter: int = field(default=0)
 
     def next_turn(self) -> int:
@@ -70,6 +71,17 @@ def filter_headers(headers: Mapping[str, str], *, redact: bool = False) -> dict[
             out[k] = (v[:12] + "...") if len(v) > 12 else "***"
         else:
             out[k] = v
+    return out
+
+
+def apply_header_overrides(headers: Mapping[str, str], overrides: Mapping[str, str]) -> dict[str, str]:
+    """Return headers with explicit upstream-only replacements applied case-insensitively."""
+    out = dict(headers)
+    for name, value in overrides.items():
+        for existing in list(out):
+            if existing.lower() == name.lower():
+                del out[existing]
+        out[name] = value
     return out
 
 

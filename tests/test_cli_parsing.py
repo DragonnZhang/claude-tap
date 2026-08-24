@@ -16,6 +16,7 @@ from claude_tap.cli import (
     _resolve_live_default,
     _split_forward,
     _target_allows_env_proxy,
+    _upstream_header_overrides,
     build_parser,
     resolve_target_and_mode,
 )
@@ -119,6 +120,21 @@ def test_run_export_prompt_path(parser):
     args = parser.parse_args(["run", "gemini", "--export-prompt", "prompt.md"])
     assert args.client == "gemini"
     assert args.export_prompt == "prompt.md"
+
+
+def test_qoder_compat_version_builds_upstream_header_override():
+    assert _upstream_header_overrides(
+        clients_mod.get("qoder"),
+        {"CLAUDE_TAP_QODER_COMPAT_VERSION": "0.2.8"},
+    ) == {"Cosy-Version": "0.2.8"}
+
+
+def test_qoder_compat_version_rejects_invalid_value():
+    with pytest.raises(ValueError, match="semantic version"):
+        _upstream_header_overrides(
+            clients_mod.get("qoder"),
+            {"CLAUDE_TAP_QODER_COMPAT_VERSION": "not a version"},
+        )
 
 
 def test_local_targets_do_not_use_outer_env_proxy():

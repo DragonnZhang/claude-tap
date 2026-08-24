@@ -4,13 +4,15 @@ Forward mode is the transparency-preserving path: the client sends to
 ``HTTPS_PROXY``; we read the CONNECT host, terminate TLS with a CA-signed leaf
 cert, and forward to *that* host — never to a fixed ``--target``.
 
-This test pins down two contracts:
+This test pins down three contracts:
 
 1. The proxy forwards based on the CONNECT host (so the user's
    ``base_url`` choice is preserved verbatim) — even when ``ProxyContext``
    carries a different ``target``.
 2. The trace's ``upstream_base_url`` reflects the host actually hit, not the
    stale ``ProxyContext.target``.
+3. Explicit upstream-only header overrides do not alter the original header
+   values recorded in the trace.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ async def _start_https_upstream(ca: CertificateAuthority, hostname: str) -> tupl
             payload = json.loads(body)
         except Exception:
             payload = None
-        received.append({"path": request.path, "host": request.host, "body": payload})
+        received.append({"path": request.path, "host": request.host, "headers": dict(request.headers), "body": payload})
         return web.json_response(
             {
                 "id": "msg_fwd",
@@ -136,6 +138,7 @@ async def test_forward_proxy_uses_connect_host_not_ctx_target(trace_dir: Path):
         target="https://wrong-target.invalid",
         bus=bus,
         session=session,
+        upstream_header_overrides={"Cosy-Version": "0.2.8"},
     )
     proxy, proxy_port = await _start_proxy(ctx, ca)
 
@@ -147,7 +150,7 @@ async def test_forward_proxy_uses_connect_host_not_ctx_target(trace_dir: Path):
             async with client.post(
                 f"https://{fake_host}/v1/messages",
                 json={"model": "claude-test", "messages": [{"role": "user", "content": "hi"}]},
-                headers={"x-api-key": "sk-fake-1234567890"},
+                headers={"x-api-key": "sk-fake-1234567890", "Cosy-Version": "0.1.48"},
                 proxy=f"http://127.0.0.1:{proxy_port}",
             ) as resp:
                 assert resp.status == 200
@@ -164,6 +167,7 @@ async def test_forward_proxy_uses_connect_host_not_ctx_target(trace_dir: Path):
     assert len(upstream_log) == 1
     assert upstream_log[0]["path"] == "/v1/messages"
     assert upstream_log[0]["body"]["model"] == "claude-test"
+    assert upstream_log[0]["headers"]["Cosy-Version"] == "0.2.8"
 
     # Trace records the actual upstream hit (CONNECT host), not ctx.target.
     lines = jsonl_path.read_text(encoding="utf-8").strip().splitlines()
@@ -172,6 +176,7 @@ async def test_forward_proxy_uses_connect_host_not_ctx_target(trace_dir: Path):
     assert record["upstream_base_url"] == f"https://{fake_host}:443"
     assert "wrong-target" not in record["upstream_base_url"]
     assert "..." in record["request"]["headers"]["x-api-key"]
+    assert record["request"]["headers"]["Cosy-Version"] == "0.1.48"
 
 
 async def test_forward_proxy_blocks_unknown_path(trace_dir: Path):
