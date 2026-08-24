@@ -1014,7 +1014,7 @@ def _iflow_auth() -> AuthInfo:
 
 
 # ---------------------------------------------------------------------------
-# Cursor / Qoder / Devin — proprietary clients.
+# Cursor / Qwen / Qoder / Devin.
 # ---------------------------------------------------------------------------
 
 
@@ -1042,6 +1042,33 @@ def _cursor_auth() -> AuthInfo:
     )
 
 
+def _qwen_env(proxy_url: str) -> dict[str, str]:
+    return {"OPENAI_BASE_URL": f"{proxy_url.rstrip('/')}/v1"}
+
+
+def _qwen_configured(env: Mapping[str, str]) -> str | None:
+    base_url = _strip_url(env.get("OPENAI_BASE_URL"))
+    if base_url and base_url.endswith("/v1"):
+        return base_url[: -len("/v1")]
+    return base_url
+
+
+def _qwen_auth() -> AuthInfo:
+    if os.environ.get("OPENAI_API_KEY"):
+        return AuthInfo(
+            logged_in=True,
+            mode="apikey",
+            detail="OPENAI_API_KEY env var",
+            suggested_target=OPENAI.default_target,
+        )
+    return AuthInfo(
+        logged_in=False,
+        mode="unknown",
+        detail="not configured (export OPENAI_API_KEY)",
+        suggested_target=OPENAI.default_target,
+    )
+
+
 def _qoder_env(proxy_url: str) -> dict[str, str]:
     no_scheme = proxy_url.split("://", 1)[1] if "://" in proxy_url else proxy_url
     return {"QODER_CENTER_DOMAIN": no_scheme}
@@ -1055,17 +1082,19 @@ def _qoder_configured(env: Mapping[str, str]) -> str | None:
 
 
 def _qoder_auth() -> AuthInfo:
-    if os.environ.get("QODER_ACCESS_TOKEN"):
+    for token_var in ("QODER_PERSONAL_ACCESS_TOKEN", "QODER_ACCESS_TOKEN"):
+        if not os.environ.get(token_var):
+            continue
         return AuthInfo(
             logged_in=True,
             mode="apikey",
-            detail="QODER_ACCESS_TOKEN env var",
+            detail=f"{token_var} env var",
             suggested_target="https://qoder.com",
         )
     return AuthInfo(
         logged_in=False,
         mode="unknown",
-        detail="not logged in (run `qodercli login` or export QODER_ACCESS_TOKEN)",
+        detail="not logged in (run `qodercli login` or export QODER_PERSONAL_ACCESS_TOKEN)",
         suggested_target="https://qoder.com",
     )
 
@@ -1583,6 +1612,19 @@ CURSOR = Client(
 )
 
 
+QWEN = Client(
+    name="qwen",
+    cmd="qwen",
+    label="Qwen Code",
+    install_url="https://github.com/QwenLM/qwen-code",
+    protocols=(OPENAI, PASSTHROUGH),
+    env_overrides=_qwen_env,
+    read_configured_upstream=_qwen_configured,
+    detect_auth=_qwen_auth,
+    warn_on_missing_yolo=False,
+)
+
+
 QODER = Client(
     name="qoder",
     cmd="qodercli",
@@ -1671,6 +1713,7 @@ _REGISTRY: dict[str, Client] = {
         KIMI_CODE,
         IFLOW,
         CURSOR,
+        QWEN,
         QODER,
         DEVIN,
         HERMES,

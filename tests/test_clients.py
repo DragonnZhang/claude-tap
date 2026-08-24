@@ -26,6 +26,8 @@ def fake_home(tmp_path: Path, monkeypatch) -> Path:
         "GOOGLE_VERTEX_BASE_URL",
         "CODE_ASSIST_ENDPOINT",
         "CURSOR_API_BASE_URL",
+        "QODER_ACCESS_TOKEN",
+        "QODER_PERSONAL_ACCESS_TOKEN",
         "QODER_CENTER_DOMAIN",
         "OPENROUTER_BASE_URL",
         "CUSTOM_BASE_URL",
@@ -76,6 +78,7 @@ def test_registry_lists_known_clients():
         "opencode",
         "pi",
         "qoder",
+        "qwen",
     ]
 
 
@@ -151,6 +154,11 @@ def test_kimi_code_env_redirects_coding_base_url():
     assert env["KIMI_BASE_URL"] == "http://127.0.0.1:8080/v1"
 
 
+def test_qwen_env_redirects_openai_base_url():
+    env = clients.get("qwen").env_overrides("http://127.0.0.1:8080")
+    assert env == {"OPENAI_BASE_URL": "http://127.0.0.1:8080/v1"}
+
+
 def test_codex_has_no_env_overrides_only_cli_args():
     """Codex ignores OPENAI_BASE_URL — env is the wrong knob; CLI ``-c`` is."""
     assert clients.get("codex").env_overrides("http://127.0.0.1:8080") == {}
@@ -216,7 +224,7 @@ def test_mimo_env_redirects_common_backends():
     assert env["MIMOCODE_MIMO_ONLY"] == "false"
 
 
-def test_openclaw_env_redirects_common_backends():
+def test_openclaw_env_redirects_common_backends(fake_home: Path):
     env = clients.get("openclaw").env_overrides("http://127.0.0.1:8080")
     assert env["OPENAI_BASE_URL"] == "http://127.0.0.1:8080/v1"
     assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8080"
@@ -265,6 +273,7 @@ def test_single_protocol_clients():
     assert [p.name for p in clients.get("gemini").protocols] == ["gemini"]
     assert [p.name for p in clients.get("grok").protocols] == ["openai", "passthrough"]
     assert [p.name for p in clients.get("minimax-code").protocols] == ["anthropic"]
+    assert [p.name for p in clients.get("qwen").protocols] == ["openai", "passthrough"]
 
 
 def test_multi_backend_clients_advertise_three_protocols():
@@ -291,6 +300,7 @@ def test_yolo_args_match_each_cli_published_flag():
         "mimo": ("--never-ask",),
         "iflow": ("--yolo",),
         "cursor": ("--yolo",),
+        "qwen": (),
         "qoder": ("--yolo",),
         "hermes": ("--yolo",),
         "openclaw": (),  # no global auto-approve flag on `openclaw agent`
@@ -739,6 +749,13 @@ def test_qoder_configured_adds_https_scheme():
     assert clients.get("qoder").read_configured_upstream({"QODER_CENTER_DOMAIN": "qoder.com"}) == "https://qoder.com"
 
 
+def test_qwen_configured_removes_v1_consumed_by_proxied_request_path():
+    configured = clients.get("qwen").read_configured_upstream(
+        {"OPENAI_BASE_URL": "https://relay.example.com/openai/v1/"}
+    )
+    assert configured == "https://relay.example.com/openai"
+
+
 def test_devin_has_no_configured_upstream():
     """Devin uses a fixed endpoint; no user-customizable base_url."""
     assert clients.get("devin").read_configured_upstream({}) is None
@@ -805,6 +822,24 @@ def test_dsh_apikey_env(fake_home: Path, monkeypatch):
     assert info.logged_in
     assert info.mode == "apikey"
     assert info.suggested_target == "https://api.deepseek.com"
+
+
+def test_qwen_detects_openai_api_key(fake_home: Path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    info = clients.get("qwen").detect_auth()
+    assert info.logged_in
+    assert info.mode == "apikey"
+    assert info.detail == "OPENAI_API_KEY env var"
+    assert info.suggested_target == "https://api.openai.com"
+
+
+def test_qoder_prefers_personal_access_token(fake_home: Path, monkeypatch):
+    monkeypatch.setenv("QODER_PERSONAL_ACCESS_TOKEN", "qoder-test")
+    monkeypatch.setenv("QODER_ACCESS_TOKEN", "legacy-test")
+    info = clients.get("qoder").detect_auth()
+    assert info.logged_in
+    assert info.mode == "apikey"
+    assert info.detail == "QODER_PERSONAL_ACCESS_TOKEN env var"
 
 
 def test_dsh_detects_alternate_provider_key(fake_home: Path, monkeypatch):
@@ -876,6 +911,7 @@ def test_other_clients_have_no_purge_list():
         "mimo",
         "iflow",
         "cursor",
+        "qwen",
         "qoder",
         "devin",
         "dsh",
@@ -907,7 +943,7 @@ def test_is_multi_backend_for_multi_protocol_clients():
 
 
 def test_is_multi_backend_false_for_single_protocol_clients():
-    for name in ("agy", "claude", "codex", "gemini", "minimax-code", "cursor", "qoder", "devin"):
+    for name in ("agy", "claude", "codex", "gemini", "minimax-code", "cursor", "qwen", "qoder", "devin"):
         assert not clients.is_multi_backend(clients.get(name)), name
 
 
@@ -917,7 +953,7 @@ def test_env_redirect_reliable_matches_client_capability():
     so they default to forward mode instead. Devin is single-backend but its
     rustls binary does not honor our env redirect, so it also defaults to
     forward mode."""
-    for name in ("claude", "codex", "gemini", "minimax-code", "cursor", "qoder", "openclaw"):
+    for name in ("claude", "codex", "gemini", "minimax-code", "cursor", "qwen", "qoder", "openclaw"):
         assert clients.get(name).env_redirect_reliable, name
     for name in ("agy", "dsh", "opencode", "pi", "omp", "kimi", "kimi-code", "mimo", "iflow", "hermes", "devin"):
         assert not clients.get(name).env_redirect_reliable, name

@@ -339,7 +339,7 @@ def test_resolve_openclaw_uses_reverse_because_config_is_patched(fake_home: Path
 
 def test_resolve_single_backend_clients_use_reverse(fake_home: Path):
     """These clients honor env or CLI-arg overrides for all required traffic."""
-    for name in ("claude", "codex", "gemini", "cursor", "qoder"):
+    for name in ("claude", "codex", "gemini", "cursor", "qwen", "qoder"):
         client = clients_mod.get(name)
         _, _, mode = resolve_target_and_mode(
             client=client,
