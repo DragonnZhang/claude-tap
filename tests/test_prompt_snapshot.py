@@ -205,6 +205,42 @@ def test_prefixed_chat_completions_path_is_openai():
     assert snapshot.system_prompt == "kimi system"
 
 
+def test_qoder_snapshot_extracts_pre_encoded_prompt_and_tools():
+    record = _record(
+        "/__claude_tap/qoder/prompt",
+        {
+            "model_config": {"key": "qmodel-test", "api_key": "must-not-be-needed"},
+            "system": "qoder system",
+            "messages": [
+                {"role": "system", "content": "qoder system"},
+                {"role": "developer", "content": "qoder developer"},
+                {"role": "user", "content": "qoder user"},
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Bash",
+                        "description": "Run a command",
+                        "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}},
+                    },
+                }
+            ],
+        },
+    )
+
+    snapshot = snapshot_from_records([record])
+
+    assert infer_provider(record) == "qoder"
+    assert snapshot.provider == "qoder"
+    assert snapshot.model == "qmodel-test"
+    assert snapshot.system_prompt == "qoder system"
+    assert snapshot.developer_prompt == "qoder developer"
+    assert snapshot.user_message == "qoder user"
+    assert snapshot.tools[0].name == "Bash"
+    assert snapshot.tools[0].schema["properties"]["cmd"]["type"] == "string"
+
+
 def test_gemini_snapshot_extracts_system_contents_and_function_declarations():
     record = _record(
         "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",

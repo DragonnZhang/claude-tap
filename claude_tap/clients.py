@@ -26,7 +26,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Literal
 
-from claude_tap.protocols import ANTHROPIC, ANTIGRAVITY, CODEX_APP, GEMINI, OPENAI, PASSTHROUGH, Protocol
+from claude_tap.protocols import (
+    ANTHROPIC,
+    ANTIGRAVITY,
+    CODEX_APP,
+    GEMINI,
+    OPENAI,
+    PASSTHROUGH,
+    Protocol,
+)
+from claude_tap.protocols import (
+    QODER as QODER_PROTOCOL,
+)
 
 LAUNCH_CLEANUP_PATH_ENV = "__CLAUDE_TAP_CLEANUP_PATH__"
 
@@ -92,6 +103,10 @@ class Client:
     # reach the model call. False selects forward mode (HTTPS_PROXY + CA-MITM)
     # so config precedence or startup requests cannot bypass capture.
     env_redirect_reliable: bool = True
+
+    # Hosts that should bypass forward-mode MITM. This is intended for large
+    # binary/static downloads that are unrelated to prompt capture.
+    forward_no_proxy: tuple[str, ...] = ()
 
     pre_launch_env_purge: tuple[str, ...] = ()
     detect_auth: Callable[[], AuthInfo] = field(default=_no_auth)
@@ -1630,9 +1645,15 @@ QODER = Client(
     cmd="qodercli",
     label="Qoder CLI",
     install_url="https://qoder.com/cli",
-    protocols=(PASSTHROUGH,),
+    protocols=(QODER_PROTOCOL,),
     env_overrides=_qoder_env,
     read_configured_upstream=_qoder_configured,
+    env_redirect_reliable=False,
+    forward_no_proxy=(
+        "qoder-ide.oss-accelerate.aliyuncs.com",
+        "download.qoder.com",
+        "static.qoder.com",
+    ),
     detect_auth=_qoder_auth,
     yolo_args=("--yolo",),
 )

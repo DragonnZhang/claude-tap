@@ -36,7 +36,12 @@ _CODEX_APP_EXECUTABLE_CANDIDATES = (
 )
 
 
-def _install_forward_proxy_env(env: dict[str, str], proxy_url: str, ca_cert_path: Path | None) -> None:
+def _install_forward_proxy_env(
+    env: dict[str, str],
+    proxy_url: str,
+    ca_cert_path: Path | None,
+    no_proxy_hosts: tuple[str, ...] = (),
+) -> None:
     """Inject ``HTTPS_PROXY`` (all standard variants) and CA-trust env vars.
 
     The CA env covers the three runtimes our supported clients use:
@@ -50,7 +55,9 @@ def _install_forward_proxy_env(env: dict[str, str], proxy_url: str, ca_cert_path
     # Node's built-in fetch only reads the proxy environment when this opt-in
     # is set. Unsupported Node releases ignore the variable.
     env["NODE_USE_ENV_PROXY"] = "1"
-    env["NO_PROXY"] = "127.0.0.1,localhost"
+    no_proxy = ",".join(dict.fromkeys(("127.0.0.1", "localhost", *no_proxy_hosts)))
+    env["NO_PROXY"] = no_proxy
+    env["no_proxy"] = no_proxy
     if ca_cert_path:
         ca = str(ca_cert_path)
         env["NODE_EXTRA_CA_CERTS"] = ca
@@ -89,6 +96,16 @@ def _strip_proxy_env_for_reverse(env: dict[str, str]) -> None:
         env.pop(key, None)
     env["NO_PROXY"] = "127.0.0.1,localhost"
     env["no_proxy"] = "127.0.0.1,localhost"
+
+
+def _install_qoder_capture_hook(env: dict[str, str], capture_prompt_path: Path | None) -> None:
+    if capture_prompt_path is None:
+        return
+    hook_path = Path(__file__).with_name("qoder_capture_hook.cjs")
+    existing = env.get("NODE_OPTIONS", "").strip()
+    require_option = f"--require={hook_path}"
+    env["NODE_OPTIONS"] = f"{existing} {require_option}".strip()
+    env["CLAUDE_TAP_QODER_PROMPT_PATH"] = str(capture_prompt_path)
 
 
 def _find_processes_by_command(command_path: str) -> list[int]:
@@ -219,6 +236,7 @@ async def run_client(
     proxy_mode: str = "reverse",
     ca_cert_path: Path | None = None,
     yolo: bool = True,
+    capture_prompt_path: Path | None = None,
 ) -> int:
     """Spawn ``client.cmd`` pointed at the local proxy and wait for it.
 
@@ -250,7 +268,7 @@ async def run_client(
     redirect_args: list[str] = []
     cleanup_path: str | None = None
     if proxy_mode == "forward":
-        _install_forward_proxy_env(env, proxy_url, ca_cert_path)
+        _install_forward_proxy_env(env, proxy_url, ca_cert_path, client.forward_no_proxy)
         # Claude Code reads proxy settings from its --settings JSON, not just
         # process env. Inject equivalent settings unless the user already
         # supplied --settings.
@@ -267,6 +285,9 @@ async def run_client(
         # CLI-level redirect (e.g. ``-c openai_base_url=…``).
         redirect_args = client.cli_args_overrides(proxy_url, os.environ)
         cmd_args = redirect_args + cmd_args
+
+    if client.name == "qoder":
+        _install_qoder_capture_hook(env, capture_prompt_path)
 
     for key in client.pre_launch_env_purge:
         env.pop(key, None)

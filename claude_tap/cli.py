@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import signal
 import sys
@@ -25,6 +26,7 @@ import threading
 import webbrowser
 from datetime import datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from urllib.parse import urlparse
 
 import aiohttp
@@ -40,7 +42,7 @@ from claude_tap.forward_proxy import ForwardProxyServer
 from claude_tap.live_viewer import LiveSink, LiveViewerServer
 from claude_tap.logging_setup import configure_logging
 from claude_tap.paths import data_dir
-from claude_tap.pipeline import ProxyContext
+from claude_tap.pipeline import ProxyContext, build_http_record
 from claude_tap.reverse_proxy import build_app
 from claude_tap.runner import run_client
 from claude_tap.trace import EventBus, JsonlSink, StatsSink
@@ -477,6 +479,11 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
 
     capture_only = bool(launch_client and getattr(args, "export_prompt", None))
     ctx = ProxyContext(protocols=protocols, target=target, bus=bus, session=session, capture_only=capture_only)
+    qoder_capture_dir: TemporaryDirectory[str] | None = None
+    qoder_capture_path: Path | None = None
+    if capture_only and client is not None and client.name == "qoder":
+        qoder_capture_dir = TemporaryDirectory(prefix="claude-tap-qoder-")
+        qoder_capture_path = Path(qoder_capture_dir.name) / "prompt-request.json"
     if capture_only:
         sys.stdout.write("[claude-tap] capture-only: exporting prompt without calling upstream\n")
 
@@ -541,6 +548,7 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
                     proxy_mode=args.mode,
                     ca_cert_path=ca_cert_path,
                     yolo=getattr(args, "yolo", True),
+                    capture_prompt_path=qoder_capture_path,
                 )
             except asyncio.CancelledError:
                 pass
@@ -552,6 +560,10 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
             except asyncio.CancelledError:
                 pass
     finally:
+        if qoder_capture_path is not None:
+            await _publish_qoder_prompt_capture(qoder_capture_path, ctx)
+        if qoder_capture_dir is not None:
+            qoder_capture_dir.cleanup()
         try:
             await session.close()
         except Exception:
@@ -620,6 +632,33 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
             exit_code = 0 if prompt_export_rc == 0 else 1
 
     return exit_code
+
+
+async def _publish_qoder_prompt_capture(path: Path, ctx: ProxyContext) -> None:
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(body, dict):
+        return
+    model_config = body.get("model_config") if isinstance(body.get("model_config"), dict) else {}
+    record = build_http_record(
+        request_id="req_qoder_pre_encode",
+        turn=ctx.next_turn(),
+        duration_ms=0,
+        method="POST",
+        path="/__claude_tap/qoder/prompt",
+        req_headers={},
+        req_body=body,
+        status=204,
+        resp_headers={},
+        resp_body=None,
+        sse_events=None,
+        upstream_base_url="local://qodercli",
+    )
+    record["capture_source"] = "qoder-pre-encode"
+    record["model"] = str(model_config.get("key") or model_config.get("model") or "")
+    await ctx.bus.publish(record)
 
 
 def _export_prompt_from_trace(trace_path: Path, output: str) -> int:

@@ -22,7 +22,7 @@ from claude_tap.pipeline import (
     parse_json_body,
     reassemble_event_stream_body,
 )
-from claude_tap.protocols import ANTHROPIC, GEMINI, OPENAI
+from claude_tap.protocols import ANTHROPIC, GEMINI, OPENAI, QODER
 
 # --- build_upstream_url (delegates to protocol.rewrite_upstream_path) -----
 
@@ -182,6 +182,20 @@ def test_capture_only_stream_response_returns_gemini_event():
     assert body["candidates"][0]["content"]["parts"][0]["text"] == "captured"
     assert events == [{"event": "message", "data": body}]
     assert raw.startswith(b"data: {")
+
+
+def test_capture_only_stream_response_returns_qoder_compatible_chunks():
+    response = capture_only_stream_response(
+        QODER,
+        "/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result",
+        {"model_config": {"key": "qoder-model"}},
+    )
+
+    assert response is not None
+    body, events, raw = response
+    assert body["model"] == "qoder-model"
+    assert events[-1]["data"] == "[DONE]"
+    assert b'"object":"chat.completion.chunk"' in raw
 
 
 # --- build_record ----------------------------------------------------------

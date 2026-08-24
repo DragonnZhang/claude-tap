@@ -239,6 +239,52 @@ def capture_only_stream_response(
     if protocol.name in ("gemini", "antigravity"):
         events = [{"event": "message", "data": resp_body}]
         return resp_body, events, _sse_bytes(events)
+    if protocol.name == "qoder":
+        model_config = req_body.get("model_config") if isinstance(req_body, dict) else None
+        model = (
+            model_config.get("key", "claude-tap-capture") if isinstance(model_config, dict) else "claude-tap-capture"
+        )
+        chunk_id = "chatcmpl_claude_tap_capture"
+        chunks = [
+            {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": "captured"},
+                        "finish_reason": None,
+                    }
+                ],
+            },
+            {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": model,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            },
+            "[DONE]",
+        ]
+        body = {
+            "id": chunk_id,
+            "object": "chat.completion",
+            "created": 0,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "captured"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+        events = [{"event": "message", "data": chunk} for chunk in chunks]
+        return body, events, _sse_bytes(events)
     if protocol.name == "openai" and "chat/completions" in path:
         model = resp_body.get("model", "claude-tap-capture")
         chunk_id = resp_body.get("id", "chatcmpl_claude_tap_capture")

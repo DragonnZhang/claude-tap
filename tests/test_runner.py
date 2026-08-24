@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from claude_tap.cli import _export_prompt_from_trace
-from claude_tap.clients import CODEX_APP_CLIENT, DSH, GEMINI_CLI, OPENCLAW, OPENCODE
+from claude_tap.clients import CODEX_APP_CLIENT, DSH, GEMINI_CLI, OPENCLAW, OPENCODE, QODER
 from claude_tap.runner import _resolve_client_command, run_client
 
 
@@ -169,6 +169,51 @@ async def test_forward_mode_enables_node_environment_proxy(monkeypatch):
     env = captured["env"]
     assert env["HTTPS_PROXY"] == "http://127.0.0.1:1234"
     assert env["NODE_USE_ENV_PROXY"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_qoder_forward_mode_bypasses_only_static_download_hosts(monkeypatch):
+    captured: dict = {}
+
+    class FakeProc:
+        returncode = None
+        pid = 12345
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+        def terminate(self) -> None:
+            self.returncode = 143
+
+        def kill(self) -> None:
+            self.returncode = 137
+
+    async def fake_create_subprocess_exec(*_cmd, **kwargs):
+        captured["env"] = kwargs["env"]
+        return FakeProc()
+
+    monkeypatch.setattr("claude_tap.runner.shutil.which", lambda _cmd: "/usr/bin/qodercli")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    capture_path = Path("/tmp/qoder-prompt.json")
+
+    rc = await run_client(
+        client=QODER,
+        proxy_port=1234,
+        proxy_host="127.0.0.1",
+        forward_args=["--print", "hi"],
+        proxy_mode="forward",
+        yolo=False,
+        capture_prompt_path=capture_path,
+    )
+
+    assert rc == 0
+    no_proxy = captured["env"]["NO_PROXY"].split(",")
+    assert "qoder-ide.oss-accelerate.aliyuncs.com" in no_proxy
+    assert "api1.qoder.sh" not in no_proxy
+    assert captured["env"]["no_proxy"] == captured["env"]["NO_PROXY"]
+    assert "qoder_capture_hook.cjs" in captured["env"]["NODE_OPTIONS"]
+    assert captured["env"]["CLAUDE_TAP_QODER_PROMPT_PATH"] == str(capture_path)
 
 
 @pytest.mark.asyncio
