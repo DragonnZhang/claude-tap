@@ -316,8 +316,17 @@ def test_yolo_args_match_each_cli_published_flag():
 def test_proprietary_clients_use_passthrough_protocol():
     from claude_tap.protocols import PASSTHROUGH
 
-    for name in ("cursor", "qoder", "devin"):
+    for name in ("cursor", "devin"):
         assert clients.get(name).protocols == (PASSTHROUGH,)
+
+
+def test_qoder_uses_dedicated_forward_protocol():
+    from claude_tap.protocols import QODER
+
+    client = clients.get("qoder")
+    assert client.protocols == (QODER,)
+    assert client.env_redirect_reliable is False
+    assert "qoder-ide.oss-accelerate.aliyuncs.com" in client.forward_no_proxy
 
 
 def test_codexapp_launches_bundle_executable_in_forward_mode():
@@ -950,10 +959,23 @@ def test_is_multi_backend_false_for_single_protocol_clients():
 def test_env_redirect_reliable_matches_client_capability():
     """Single-backend clients honor env / CLI-arg redirect. Multi-backend
     clients have config-file ``baseURL`` that overrides our env override,
-    so they default to forward mode instead. Devin is single-backend but its
-    rustls binary does not honor our env redirect, so it also defaults to
-    forward mode."""
-    for name in ("claude", "codex", "gemini", "minimax-code", "cursor", "qwen", "qoder", "openclaw"):
+    so they default to forward mode instead. Qoder spans several fixed service
+    hosts, and Devin's rustls binary does not honor our env redirect, so both
+    single-backend clients also default to forward mode."""
+    for name in ("claude", "codex", "gemini", "minimax-code", "cursor", "qwen", "openclaw"):
         assert clients.get(name).env_redirect_reliable, name
-    for name in ("agy", "dsh", "opencode", "pi", "omp", "kimi", "kimi-code", "mimo", "iflow", "hermes", "devin"):
+    for name in (
+        "agy",
+        "dsh",
+        "opencode",
+        "pi",
+        "omp",
+        "kimi",
+        "kimi-code",
+        "mimo",
+        "iflow",
+        "hermes",
+        "qoder",
+        "devin",
+    ):
         assert not clients.get(name).env_redirect_reliable, name

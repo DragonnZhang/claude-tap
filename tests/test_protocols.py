@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 
 from claude_tap import protocols
-from claude_tap.protocols import ANTHROPIC, ANTIGRAVITY, CODEX_APP, GEMINI, OPENAI
+from claude_tap.protocols import ANTHROPIC, ANTIGRAVITY, CODEX_APP, GEMINI, OPENAI, QODER
 
 
 def test_registry_has_known_protocols():
     names = protocols.names()
-    assert names == ["anthropic", "antigravity", "codexapp", "gemini", "openai", "passthrough"]
+    assert names == ["anthropic", "antigravity", "codexapp", "gemini", "openai", "passthrough", "qoder"]
 
 
 def test_registry_get_unknown_raises():
@@ -45,6 +45,18 @@ def test_codexapp_relays_all_but_captures_only_response_posts():
     assert CODEX_APP.captures("POST", "/backend-api/codex/responses")
     assert not CODEX_APP.captures("GET", "/backend-api/codex/responses")
     assert not CODEX_APP.captures("POST", "/backend-api/codex/analytics-events/events")
+
+
+def test_qoder_relays_all_but_captures_only_generation_posts():
+    assert QODER.matches("/api/v1/jobToken/exchange")
+    assert QODER.matches("/api/v2/model/list?Encode=1")
+    generation = "/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result"
+    assert QODER.matches(generation)
+    assert QODER.captures("POST", generation)
+    assert not QODER.captures("GET", generation)
+    assert not QODER.captures("POST", "/api/v1/jobToken/exchange")
+    assert not QODER.captures("POST", "/api/v2/model/list?Encode=1")
+    assert QODER.is_streaming(generation, {})
 
 
 def test_antigravity_relays_internal_paths_but_captures_only_generation():

@@ -294,10 +294,11 @@ def test_resolve_clients_with_incomplete_redirects_force_forward_mode(fake_home:
     """Clients whose redirect misses required traffic use forward mode.
 
     opencode/pi/omp/kimi/kimi-code/mimo/iflow/hermes honor a config-file
-    ``baseURL`` over env vars. Devin is single-backend, but its rustls binary
-    does not honor our env redirect. Codex.app launches its API sidecar from
-    Electron. Antigravity's base URL override does not cover startup calls.
-    Reverse mode would silently miss traffic for these clients.
+    ``baseURL`` over env vars. Qoder spans several fixed service hosts, while
+    Devin's rustls binary does not honor our env redirect. Codex.app launches
+    its API sidecar from Electron. Antigravity's base URL override does not
+    cover startup calls. Reverse mode would silently miss traffic for these
+    clients.
     """
     for name in (
         "agy",
@@ -309,6 +310,7 @@ def test_resolve_clients_with_incomplete_redirects_force_forward_mode(fake_home:
         "mimo",
         "iflow",
         "hermes",
+        "qoder",
         "devin",
         "codexapp",
     ):
@@ -339,7 +341,7 @@ def test_resolve_openclaw_uses_reverse_because_config_is_patched(fake_home: Path
 
 def test_resolve_single_backend_clients_use_reverse(fake_home: Path):
     """These clients honor env or CLI-arg overrides for all required traffic."""
-    for name in ("claude", "codex", "gemini", "cursor", "qwen", "qoder"):
+    for name in ("claude", "codex", "gemini", "cursor", "qwen"):
         client = clients_mod.get(name)
         _, _, mode = resolve_target_and_mode(
             client=client,

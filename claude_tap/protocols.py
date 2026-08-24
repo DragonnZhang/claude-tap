@@ -219,6 +219,13 @@ def _codex_app_is_streaming(path: str, body: object) -> bool:
     return path.split("?", 1)[0].rstrip("/") == "/backend-api/codex/responses"
 
 
+def _qoder_is_streaming(path: str, _body: object) -> bool:
+    # Qoder's proprietary generation endpoint always returns SSE. Its body
+    # does not carry a stable ``stream`` flag across CLI releases.
+    clean = path.split("?", 1)[0].rstrip("/")
+    return clean.endswith("/agent_chat_generation")
+
+
 # ---------------------------------------------------------------------------
 # Path rewrite helpers
 # ---------------------------------------------------------------------------
@@ -382,8 +389,23 @@ CODEX_APP = Protocol(
 )
 
 
+# Qoder needs all startup/auth/model-list calls transparently relayed, but only
+# its proprietary generation request belongs in prompt traces. A dedicated
+# protocol prevents capture-only mode from replacing PAT exchange responses.
+QODER = Protocol(
+    name="qoder",
+    default_target="https://qoder.com",
+    allowed_paths=(),
+    accepts_all_paths=True,
+    capture_paths=("suffix:/agent_chat_generation",),
+    capture_methods=("POST",),
+    is_streaming=_qoder_is_streaming,
+    make_reassembler=PassthroughReassembler,
+)
+
+
 # For clients whose SSE protocol we don't natively understand (Cursor's
-# proprietary RPC, Qoder's, Devin's). We accept every path so the proxy can
+# proprietary RPC and Devin's). We accept every path so the proxy can
 # transparently relay bytes. The reassembler only collects the raw event
 # stream — the trace will record everything as ``response.sse_events`` even
 # though no structured snapshot is produced.
@@ -396,7 +418,9 @@ PASSTHROUGH = Protocol(
 )
 
 
-_REGISTRY: dict[str, Protocol] = {p.name: p for p in (ANTHROPIC, ANTIGRAVITY, CODEX_APP, OPENAI, GEMINI, PASSTHROUGH)}
+_REGISTRY: dict[str, Protocol] = {
+    p.name: p for p in (ANTHROPIC, ANTIGRAVITY, CODEX_APP, OPENAI, GEMINI, QODER, PASSTHROUGH)
+}
 
 
 def get(name: str) -> Protocol:

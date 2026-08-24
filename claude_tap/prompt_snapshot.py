@@ -68,6 +68,8 @@ def snapshot_from_records(records: list[dict[str, Any]]) -> PromptSnapshot:
         return _openai_snapshot(record)
     if provider == "gemini":
         return _gemini_snapshot(record)
+    if provider == "qoder":
+        return _qoder_snapshot(record)
     raise ValueError("no prompt-bearing request found in trace")
 
 
@@ -78,6 +80,8 @@ def infer_provider(record: dict[str, Any]) -> str:
     path = str(req.get("path") or "").split("?", 1)[0]
     body = _request_body(record)
 
+    if path == "/__claude_tap/qoder/prompt":
+        return "qoder"
     if path.startswith("/v1/messages") or path.startswith("/v1/complete"):
         return "anthropic"
     if path.startswith("/v1/responses") or path.startswith("/responses"):
@@ -91,6 +95,8 @@ def infer_provider(record: dict[str, Any]) -> str:
     if path.startswith("/v1internal") and _looks_like_gemini_body(body):
         return "gemini"
 
+    if "model_config" in body and "messages" in body and "tools" in body:
+        return "qoder"
     if "system" in body and "messages" in body:
         return "anthropic"
     if "instructions" in body or "input" in body:
@@ -207,6 +213,23 @@ def _gemini_snapshot(record: dict[str, Any]) -> PromptSnapshot:
     )
 
 
+def _qoder_snapshot(record: dict[str, Any]) -> PromptSnapshot:
+    body = _request_body(record)
+    system_prompt, developer_prompt, user_message = _prompt_text_for_provider("qoder", body)
+    tools = tuple(_openai_tools(body.get("tools")))
+    model_config = body.get("model_config") if isinstance(body.get("model_config"), dict) else {}
+    model = str(model_config.get("key") or model_config.get("model") or model_config.get("display_name") or "")
+    return _base_snapshot(
+        record,
+        provider="qoder",
+        model=model,
+        system_prompt=system_prompt,
+        developer_prompt=developer_prompt,
+        user_message=user_message,
+        tools=tools,
+    )
+
+
 def _base_snapshot(
     record: dict[str, Any],
     *,
@@ -279,6 +302,8 @@ def _tools_for_provider(provider: str, body: dict[str, Any]) -> list[PromptTool]
         return _openai_body_tools(body)
     if provider == "gemini":
         return _gemini_tools(body.get("tools"))
+    if provider == "qoder":
+        return _openai_tools(body.get("tools"))
     return []
 
 
@@ -313,6 +338,20 @@ def _prompt_text_for_provider(provider: str, body: dict[str, Any]) -> tuple[str,
             _gemini_parts_text(body.get("system_instruction") or body.get("systemInstruction")),
             _contents_text(body.get("contents"), {"developer", "system"}),
             _contents_text(body.get("contents"), {"user"}),
+        )
+    if provider == "qoder":
+        messages = body.get("messages")
+        top_level_system = str(body.get("system") or "")
+        message_system = _messages_text(messages, {"system"})
+        system = (
+            top_level_system
+            if top_level_system.strip() == message_system.strip()
+            else _join_text([top_level_system, message_system])
+        )
+        return (
+            system,
+            _messages_text(messages, {"developer"}),
+            _messages_text(messages, {"user"}),
         )
     return ("", "", "")
 
