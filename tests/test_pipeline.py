@@ -4,7 +4,10 @@ decompression, JSON parsing, record construction, upstream URL building.
 
 from __future__ import annotations
 
+import base64
 import gzip
+import json
+import struct
 import zlib
 
 import pytest
@@ -25,6 +28,29 @@ from claude_tap.pipeline import (
 from claude_tap.protocols import ANTHROPIC, GEMINI, OPENAI, QODER
 
 # --- build_upstream_url (delegates to protocol.rewrite_upstream_path) -----
+
+
+def test_capture_structured_json_resolves_required_references_and_enum():
+    schema = {
+        "$defs": {"State": {"type": "string", "enum": ["FINISH", "CONTINUE"]}},
+        "type": "object",
+        "properties": {"state": {"$ref": "#/$defs/State"}, "extra": {"type": "string"}},
+        "required": ["state"],
+    }
+    response = capture_only_response(
+        OPENAI, "/v1/chat/completions", {"response_format": {"type": "json_schema", "json_schema": {"schema": schema}}}
+    )
+    assert json.loads(response["choices"][0]["message"]["content"]) == {"state": "FINISH"}
+
+
+@pytest.mark.parametrize("inputs,count", [("one", 1), ([1, 2, 3], 1), ([[1], [2]], 2), (["one", "two"], 2)])
+def test_capture_embeddings_preserves_batch_shape_and_base64_encoding(inputs, count):
+    response = capture_only_response(
+        OPENAI, "/v1/embeddings", {"input": inputs, "dimensions": 4, "encoding_format": "base64"}
+    )
+    assert len(response["data"]) == count
+    for item in response["data"]:
+        assert struct.unpack("<4f", base64.b64decode(item["embedding"])) == (1.0, 0.0, 0.0, 0.0)
 
 
 def test_upstream_url_anthropic_keeps_path():

@@ -28,7 +28,19 @@ def test_generic_google_v1_verbs_do_not_use_openai_models_protocol():
 @pytest.mark.parametrize("transport", ["forward", "forward-http", "reverse"])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize(
-    "api", ["messages", "chat", "responses", "gemini-v1", "gemini-v1beta", "ollama", "ollama-generate"]
+    "api",
+    [
+        "messages",
+        "chat",
+        "responses",
+        "chat-json",
+        "responses-json",
+        "gemini-v1",
+        "gemini-v1beta",
+        "ollama",
+        "ollama-generate",
+        "embeddings",
+    ],
 )
 async def test_generic_capture_returns_native_response_without_upstream(tmp_path, transport, stream, api):
     if api.startswith("gemini"):
@@ -44,16 +56,37 @@ async def test_generic_capture_returns_native_response_without_upstream(tmp_path
             "messages": "/v1/messages",
             "chat": "/v1/chat/completions",
             "responses": "/v1/responses",
+            "chat-json": "/v1/chat/completions",
+            "responses-json": "/v1/responses",
+            "embeddings": "/v1/embeddings",
             "ollama": "/api/chat",
             "ollama-generate": "/api/generate",
         }[api]
         body = {"model": "test-model", "stream": stream}
         if api == "ollama-generate":
             body.update(system="System", prompt="Task")
-        elif api == "responses":
+        elif api.startswith("responses"):
             body.update(instructions="System", input="Task")
         else:
             body.update(messages=[{"role": "user", "content": "Task"}])
+        if api.endswith("-json"):
+            schema = {
+                "type": "object",
+                "properties": {
+                    "status": {"enum": ["FINISH", "CONTINUE"]},
+                    "plan": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["status", "plan"],
+            }
+            if api == "chat-json":
+                body["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": "probe", "strict": True, "schema": schema},
+                }
+            else:
+                body["text"] = {"format": {"type": "json_schema", "name": "probe", "schema": schema}}
+        if api == "embeddings":
+            body = {"model": "test-model", "input": ["one", "two"], "dimensions": 4}
         if api == "ollama":
             body["messages"].insert(0, {"role": "system", "content": "System"})
             body["tools"] = [
@@ -101,7 +134,7 @@ async def test_generic_capture_returns_native_response_without_upstream(tmp_path
         async with aiohttp.ClientSession(connector=connector) as client:
             async with client.post(url, json=body, proxy=proxy) as response:
                 assert response.status == 200
-                if stream:
+                if stream and api != "embeddings":
                     text = await response.text()
                     media_type = "application/x-ndjson" if api.startswith("ollama") else "text/event-stream"
                     assert media_type in response.headers["Content-Type"]
@@ -109,8 +142,12 @@ async def test_generic_capture_returns_native_response_without_upstream(tmp_path
                         "messages": "message_stop",
                         "chat": "chat.completion.chunk",
                         "responses": "response.completed",
+                        "chat-json": "chat.completion.chunk",
+                        "responses-json": "response.completed",
                     }.get(api, "captured" if api.startswith("ollama") else "candidates")
                     assert marker in text
+                    if api.endswith("-json"):
+                        assert "FINISH" in text
                     if api == "ollama":
                         chunk = json.loads(text.strip())
                         assert chunk["message"]["content"] == "captured" and chunk["done"]
@@ -119,7 +156,17 @@ async def test_generic_capture_returns_native_response_without_upstream(tmp_path
                         assert chunk["response"] == "captured" and chunk["done"]
                 else:
                     payload = await response.json()
-                    if api == "messages":
+                    if api == "embeddings":
+                        assert [item["index"] for item in payload["data"]] == [0, 1]
+                        assert all(item["embedding"] == [1.0, 0.0, 0.0, 0.0] for item in payload["data"])
+                    elif api.endswith("-json"):
+                        content = (
+                            payload["choices"][0]["message"]["content"]
+                            if api == "chat-json"
+                            else payload["output"][0]["content"][0]["text"]
+                        )
+                        assert json.loads(content) == {"status": "FINISH", "plan": []}
+                    elif api == "messages":
                         assert payload["type"] == "message"
                     elif api == "chat":
                         assert payload["object"] == "chat.completion"
