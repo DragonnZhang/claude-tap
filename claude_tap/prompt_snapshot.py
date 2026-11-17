@@ -8,7 +8,7 @@ prompt surface rather than the full traffic trace.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any
 
 from claude_tap.tool_normalization import expand_tool_namespaces
@@ -67,7 +67,7 @@ def snapshot_from_records(records: list[dict[str, Any]]) -> PromptSnapshot:
     if provider == "openai":
         return _openai_snapshot(record)
     if provider == "ollama":
-        return replace(_openai_snapshot(record), provider="ollama")
+        return _openai_snapshot(record, provider="ollama")
     if provider == "gemini":
         return _gemini_snapshot(record)
     if provider == "qoder":
@@ -84,7 +84,7 @@ def infer_provider(record: dict[str, Any]) -> str:
 
     if path == "/__claude_tap/qoder/prompt":
         return "qoder"
-    if path.rstrip("/") == "/api/chat":
+    if path.rstrip("/") in ("/api/chat", "/api/generate"):
         return "ollama"
     if path.startswith("/v1/messages") or path.startswith("/v1/complete"):
         return "anthropic"
@@ -181,13 +181,13 @@ def _anthropic_snapshot(record: dict[str, Any]) -> PromptSnapshot:
     )
 
 
-def _openai_snapshot(record: dict[str, Any]) -> PromptSnapshot:
+def _openai_snapshot(record: dict[str, Any], *, provider: str = "openai") -> PromptSnapshot:
     body = _request_body(record)
-    system_prompt, developer_prompt, user_message = _prompt_text_for_provider("openai", body)
+    system_prompt, developer_prompt, user_message = _prompt_text_for_provider(provider, body)
     tools = tuple(_openai_body_tools(body))
     return _base_snapshot(
         record,
-        provider="openai",
+        provider=provider,
         model=str(body.get("model") or ""),
         system_prompt=system_prompt,
         developer_prompt=developer_prompt,
@@ -312,6 +312,8 @@ def _tools_for_provider(provider: str, body: dict[str, Any]) -> list[PromptTool]
 
 
 def _prompt_text_for_provider(provider: str, body: dict[str, Any]) -> tuple[str, str, str]:
+    if provider == "ollama" and "prompt" in body:
+        return str(body.get("system") or ""), "", str(body.get("prompt") or "")
     if provider == "anthropic":
         return (_anthropic_system_text(body.get("system")), "", _messages_text(body.get("messages"), {"user"}))
     if provider in ("openai", "ollama"):

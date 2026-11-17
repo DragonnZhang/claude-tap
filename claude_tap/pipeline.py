@@ -120,7 +120,11 @@ def capture_only_response(protocol: Protocol, path: str, req_body: object) -> di
         return {
             "model": model,
             "created_at": "2000-01-01T00:00:00Z",
-            "message": {"role": "assistant", "content": "captured"},
+            **(
+                {"response": "captured"}
+                if path.split("?", 1)[0].rstrip("/") == "/api/generate"
+                else {"message": {"role": "assistant", "content": "captured"}}
+            ),
             "done": True,
             "done_reason": "stop",
             "prompt_eval_count": 0,

@@ -64,7 +64,7 @@ claude-tap kimi-code -- --prompt "Say hi"
 表格里的 client 名都可以这样传。`--` 后面的参数会原样传给对应 CLI。
 
 表格外的可执行程序也可通过 `claude-tap run <可执行程序> -- <参数>` 启动。通用客户端使用正向代理，
-识别原生 Anthropic Messages、OpenAI Chat Completions / Responses、Gemini 内容生成和 Ollama `/api/chat` 接口；
+识别原生 Anthropic Messages、OpenAI Chat Completions / Responses、Gemini 内容生成和 Ollama `/api/chat`、`/api/generate` 接口；
 `--export-prompt` 会按对应协议返回本地模拟响应。其他路径仍按原始透传方式记录。
 Ollama 支持 JSON 和 NDJSON 流式响应、提示词/工具导出，并保留思考、工具调用、用量及未完成流的证据。
 协议格式见 [Ollama 官方 API 文档](https://github.com/ollama/ollama/blob/main/docs/api.md)。

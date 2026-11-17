@@ -46,7 +46,8 @@ def test_partial_ollama_stream_keeps_incomplete_and_error_evidence():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transport", ["forward", "reverse"])
 @pytest.mark.parametrize("stream", [False, True])
-async def test_native_ollama_recording_preserves_wire_and_reassembles(tmp_path, transport, stream):
+@pytest.mark.parametrize("api", ["chat", "generate"])
+async def test_native_ollama_recording_preserves_wire_and_reassembles(tmp_path, transport, stream, api):
     chunks = [
         {"model": "test", "message": {"role": "assistant", "content": "one"}, "done": False},
         {
@@ -66,10 +67,23 @@ async def test_native_ollama_recording_preserves_wire_and_reassembles(tmp_path, 
         "prompt_eval_count": 7,
         "eval_count": 4,
     }
+    if api == "generate":
+        chunks = [
+            {
+                **{key: value for key, value in chunk.items() if key != "message"},
+                "response": chunk["message"]["content"],
+            }
+            for chunk in chunks
+        ]
+        expected.pop("message")
+        expected["response"] = "onetwo"
+    path = "/api/" + api
+    body = {"model": "test", "stream": stream}
+    body.update({"prompt": "Task"} if api == "generate" else {"messages": [{"role": "user", "content": "Task"}]})
     payload = b"\n".join(json.dumps(chunk).encode() for chunk in chunks) + b"\n"
 
     async def respond(request):
-        assert (await request.json())["messages"][0]["content"] == "Task"
+        assert await request.json() == body
         if not stream:
             return web.json_response(expected)
         response = web.StreamResponse(headers={"Content-Type": "application/x-ndjson"})
@@ -80,7 +94,7 @@ async def test_native_ollama_recording_preserves_wire_and_reassembles(tmp_path, 
         return response
 
     upstream_app = web.Application()
-    upstream_app.router.add_post("/api/chat", respond)
+    upstream_app.router.add_post(path, respond)
     upstream = web.AppRunner(upstream_app)
     await upstream.setup()
     site = web.TCPSite(upstream, "127.0.0.1", 0)
@@ -95,17 +109,17 @@ async def test_native_ollama_recording_preserves_wire_and_reassembles(tmp_path, 
             cert, key = ensure_ca()
             server = ForwardProxyServer("127.0.0.1", 0, CertificateAuthority(cert, key), context)
             port = await server.start()
-            url, proxy = upstream_url + "/api/chat", f"http://127.0.0.1:{port}"
+            url, proxy = upstream_url + path, f"http://127.0.0.1:{port}"
         else:
             server = web.AppRunner(build_app(context))
             await server.setup()
             proxy_site = web.TCPSite(server, "127.0.0.1", 0)
             await proxy_site.start()
-            url, proxy = f"http://127.0.0.1:{proxy_site._server.sockets[0].getsockname()[1]}/api/chat", None
+            url, proxy = f"http://127.0.0.1:{proxy_site._server.sockets[0].getsockname()[1]}" + path, None
         try:
             async with session.post(
                 url,
-                json={"model": "test", "messages": [{"role": "user", "content": "Task"}], "stream": stream},
+                json=body,
                 proxy=proxy,
             ) as response:
                 assert response.status == 200
@@ -124,7 +138,35 @@ async def test_native_ollama_recording_preserves_wire_and_reassembles(tmp_path, 
     assert record["response"]["body"] == expected
     metadata = extract_metadata(json.dumps(record))
     assert metadata["input_tokens"] == 7 and metadata["output_tokens"] == 4
-    assert metadata["response_tool_names"] == ["shell"]
+    assert metadata["response_tool_names"] == (["shell"] if api == "chat" else [])
+
+
+def test_generate_reassembly_preserves_flat_chunks_metrics_and_partial_error():
+    parser = OllamaReassembler()
+    parser.feed_bytes(b'{"model":"test","response":"one","thinking":"why","done":false}\n')
+    parser.feed_bytes(b'{"response":"two","thinking":" now","done":true,"context":[1,2],"eval_count":3}\n')
+    parser.feed_bytes(b'{"error":"stopped"}\n{"response":')
+    assert parser.reconstruct() == {
+        "model": "test",
+        "response": "onetwo",
+        "thinking": "why now",
+        "done": True,
+        "context": [1, 2],
+        "eval_count": 3,
+        "error": "stopped",
+    }
+    assert parser.events[-1] == {"event": "incomplete", "data": '{"response":'}
+
+
+def test_generate_snapshot_keeps_flat_prompt_without_inventing_system_role():
+    from claude_tap.prompt_snapshot import snapshot_from_records
+
+    body = {"model": "qwen3.5:4b", "prompt": "Native triage instructions and user task", "stream": False}
+    snapshot = snapshot_from_records([{"request": {"path": "/api/generate", "body": body}}])
+    assert snapshot.provider == "ollama"
+    assert snapshot.system_prompt == ""
+    assert snapshot.user_message == body["prompt"]
+    assert snapshot.raw_request_body == body
 
 
 def test_chat_and_ollama_metadata_report_native_usage_tools_and_errors():

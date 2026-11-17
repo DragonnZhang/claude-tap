@@ -27,7 +27,9 @@ def test_generic_google_v1_verbs_do_not_use_openai_models_protocol():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transport", ["forward", "forward-http", "reverse"])
 @pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("api", ["messages", "chat", "responses", "gemini-v1", "gemini-v1beta", "ollama"])
+@pytest.mark.parametrize(
+    "api", ["messages", "chat", "responses", "gemini-v1", "gemini-v1beta", "ollama", "ollama-generate"]
+)
 async def test_generic_capture_returns_native_response_without_upstream(tmp_path, transport, stream, api):
     if api.startswith("gemini"):
         version = api.removeprefix("gemini-")
@@ -43,9 +45,12 @@ async def test_generic_capture_returns_native_response_without_upstream(tmp_path
             "chat": "/v1/chat/completions",
             "responses": "/v1/responses",
             "ollama": "/api/chat",
+            "ollama-generate": "/api/generate",
         }[api]
         body = {"model": "test-model", "stream": stream}
-        if api == "responses":
+        if api == "ollama-generate":
+            body.update(system="System", prompt="Task")
+        elif api == "responses":
             body.update(instructions="System", input="Task")
         else:
             body.update(messages=[{"role": "user", "content": "Task"}])
@@ -98,17 +103,20 @@ async def test_generic_capture_returns_native_response_without_upstream(tmp_path
                 assert response.status == 200
                 if stream:
                     text = await response.text()
-                    media_type = "application/x-ndjson" if api == "ollama" else "text/event-stream"
+                    media_type = "application/x-ndjson" if api.startswith("ollama") else "text/event-stream"
                     assert media_type in response.headers["Content-Type"]
                     marker = {
                         "messages": "message_stop",
                         "chat": "chat.completion.chunk",
                         "responses": "response.completed",
-                    }.get(api, "captured" if api == "ollama" else "candidates")
+                    }.get(api, "captured" if api.startswith("ollama") else "candidates")
                     assert marker in text
                     if api == "ollama":
                         chunk = json.loads(text.strip())
                         assert chunk["message"]["content"] == "captured" and chunk["done"]
+                    elif api == "ollama-generate":
+                        chunk = json.loads(text.strip())
+                        assert chunk["response"] == "captured" and chunk["done"]
                 else:
                     payload = await response.json()
                     if api == "messages":
@@ -119,6 +127,8 @@ async def test_generic_capture_returns_native_response_without_upstream(tmp_path
                         assert payload["status"] == "completed"
                     elif api == "ollama":
                         assert payload["message"]["content"] == "captured" and payload["done"]
+                    elif api == "ollama-generate":
+                        assert payload["response"] == "captured" and payload["done"]
                     else:
                         assert payload["candidates"][0]["content"]["parts"][0]["text"] == "captured"
     finally:
@@ -130,11 +140,14 @@ async def test_generic_capture_returns_native_response_without_upstream(tmp_path
     records = [json.loads(line) for line in trace.read_text().splitlines()]
     assert len(records) == 1
     assert records[0]["request"]["body"] == body
-    if api == "ollama":
+    if api.startswith("ollama"):
         snapshot = snapshot_from_records(records)
         assert snapshot.provider == "ollama" and snapshot.model == "test-model"
         assert snapshot.system_prompt == "System" and snapshot.user_message == "Task"
-        assert snapshot.tools[0].raw == body["tools"][0]
+        if api == "ollama":
+            assert snapshot.tools[0].raw == body["tools"][0]
+        else:
+            assert not snapshot.tools
 
 
 @pytest.mark.asyncio

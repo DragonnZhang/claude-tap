@@ -1,4 +1,4 @@
-"""Reassemble native Ollama chat streams without changing their wire framing."""
+"""Reassemble native Ollama streams without changing their wire framing."""
 
 from __future__ import annotations
 
@@ -31,7 +31,14 @@ class OllamaReassembler:
             return
         if self._snapshot is None:
             self._snapshot = {}
-        self._snapshot.update({key: copy.deepcopy(value) for key, value in data.items() if key != "message"})
+        self._snapshot.update(
+            {key: copy.deepcopy(value) for key, value in data.items() if key not in ("message", "response", "thinking")}
+        )
+        for key in ("response", "thinking"):
+            value = data.get(key)
+            if isinstance(value, str):
+                previous = self._snapshot.get(key)
+                self._snapshot[key] = (previous if isinstance(previous, str) else "") + value
         message = data.get("message")
         if isinstance(message, dict):
             target = self._snapshot.setdefault("message", {})
