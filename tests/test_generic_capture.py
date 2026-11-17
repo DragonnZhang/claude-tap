@@ -101,3 +101,56 @@ async def test_generic_capture_returns_native_response_without_upstream(tmp_path
     records = [json.loads(line) for line in trace.read_text().splitlines()]
     assert len(records) == 1
     assert records[0]["request"]["body"] == body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["forward", "reverse"])
+async def test_capture_only_refuses_websocket_before_upstream_and_accepts_http_fallback(tmp_path, transport):
+    class NoUpstream:
+        trust_env = False
+
+        def request(self, *args, **kwargs):
+            raise AssertionError("HTTP capture-only must not call upstream")
+
+        def ws_connect(self, *args, **kwargs):
+            raise AssertionError("WebSocket capture-only must not call upstream")
+
+    trace = tmp_path / "trace.jsonl"
+    bus = EventBus()
+    bus.subscribe(JsonlSink(trace))
+    context = ProxyContext(
+        generic("custom-cli").protocols, "https://unused.invalid", bus, NoUpstream(), capture_only=True
+    )
+    if transport == "forward":
+        cert, key = ensure_ca()
+        server = ForwardProxyServer("127.0.0.1", 0, CertificateAuthority(cert, key), context)
+        port = await server.start()
+        connector = aiohttp.TCPConnector(ssl=ssl.create_default_context(cafile=str(cert)))
+        url = "https://generic-capture.invalid/v1/responses"
+        proxy = f"http://127.0.0.1:{port}"
+    else:
+        server = web.AppRunner(build_app(context))
+        await server.setup()
+        site = web.TCPSite(server, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        connector = aiohttp.TCPConnector()
+        url, proxy = f"http://127.0.0.1:{port}/v1/responses", None
+    body = {"model": "test-model", "instructions": "Native system", "input": "Task"}
+    try:
+        async with aiohttp.ClientSession(connector=connector) as client:
+            with pytest.raises(aiohttp.WSServerHandshakeError) as error:
+                await client.ws_connect(url, proxy=proxy)
+            assert error.value.status == 426
+            async with client.post(url, json=body, proxy=proxy) as response:
+                assert response.status == 200
+                assert (await response.json())["status"] == "completed"
+    finally:
+        if transport == "forward":
+            await server.stop()
+        else:
+            await server.cleanup()
+        await bus.close_all()
+    records = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert len(records) == 1
+    assert records[0]["request"]["body"] == body

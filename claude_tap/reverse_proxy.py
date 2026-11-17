@@ -299,6 +299,8 @@ async def _handle_websocket(
     ctx: ProxyContext,
     protocol: Protocol,
 ) -> web.StreamResponse:
+    if ctx.capture_only:
+        return web.Response(status=426, text="WebSocket capture-only is unsupported; use HTTP fallback.")
     upstream_http = build_upstream_url(ctx.target, request.path_qs, protocol)
     if upstream_http.startswith("https://"):
         upstream_ws = "wss://" + upstream_http[8:]

@@ -268,6 +268,16 @@ class ForwardProxyServer:
         protocol: Protocol,
     ) -> None:
         ctx = self._ctx
+        if ctx.capture_only and any(
+            key.lower() == "upgrade" and value.lower() == "websocket" for key, value in headers.items()
+        ):
+            body_bytes = b"WebSocket capture-only is unsupported; use HTTP fallback."
+            client_writer.write(b"HTTP/1.1 426 Upgrade Required\r\n")
+            client_writer.write(b"Content-Type: text/plain\r\n")
+            client_writer.write(f"Content-Length: {len(body_bytes)}\r\n\r\n".encode())
+            client_writer.write(body_bytes)
+            await client_writer.drain()
+            return
         request_id = f"req_{uuid.uuid4().hex[:12]}"
         t0 = time.monotonic()
         should_capture = protocol.captures(method, path)

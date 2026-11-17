@@ -71,6 +71,9 @@ passed to that CLI unchanged.
 An executable that is not in the table can be launched with `claude-tap run <executable> -- <args>`.
 Generic clients use forward capture and recognize native Anthropic Messages, OpenAI Chat Completions / Responses,
 and Gemini content-generation endpoints, including protocol-correct dummy replies with `--export-prompt`.
+Capture-only mode rejects WebSocket upgrades locally with HTTP 426 before opening
+any upstream connection. Clients with a native HTTP fallback can then emit their
+ordinary HTTP request; clients without one require an explicit HTTP transport.
 Other paths retain raw passthrough capture. Arbitrary gateway prefixes and non-model startup calls may still need
 a dedicated client configuration.
 

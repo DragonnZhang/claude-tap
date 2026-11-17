@@ -66,6 +66,8 @@ claude-tap kimi-code -- --prompt "Say hi"
 表格外的可执行程序也可通过 `claude-tap run <可执行程序> -- <参数>` 启动。通用客户端使用正向代理，
 识别原生 Anthropic Messages、OpenAI Chat Completions / Responses 和 Gemini 内容生成接口；
 `--export-prompt` 会按对应协议返回本地模拟响应。其他路径仍按原始透传方式记录。
+仅采集模式会在本地以 HTTP 426 拒绝 WebSocket 升级，不建立上游连接。
+支持原生 HTTP 回退的客户端随后可发送普通 HTTP 请求；其他客户端需显式配置 HTTP 传输。
 自定义网关前缀和非模型启动请求可能仍需专门的客户端配置。
 
 CLI 退出后，会输出类似这些文件：
