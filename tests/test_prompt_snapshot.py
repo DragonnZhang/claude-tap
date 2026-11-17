@@ -413,9 +413,15 @@ def test_prompt_md_export_format(tmp_path: Path):
         "/api/embeddings",
         "/v1beta/models/text-embedding-004:embedContent",
         "/v1beta/models/text-embedding-004:batchEmbedContents",
+        "/v1/messages/count_tokens",
+        "/v1beta/models/gemini:countTokens",
+        "/v1beta/models/gemini:computeTokens",
+        "/v1/responses/input_tokens",
+        "/tokenize",
+        "/detokenize",
     ],
 )
-def test_embedding_requests_never_stand_in_for_generation_prompt(path):
+def test_auxiliary_requests_never_stand_in_for_generation_prompt(path):
     embedding = _record(path, {"model": "embedding", "input": "large auxiliary input " * 1000})
     with pytest.raises(ValueError, match="no prompt-bearing"):
         snapshot_from_records([embedding])
