@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from claude_tap.prompt_snapshot import infer_provider, render_prompt_markdown, snapshot_from_records
 
 
@@ -400,3 +402,28 @@ def test_prompt_md_export_format(tmp_path: Path):
     assert "# Prompt Snapshot" not in text
     assert "# System Prompt" in text
     assert "system text" in text
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/embeddings",
+        "/openai/deployments/model/embeddings?api-version=test",
+        "/api/embed",
+        "/api/embeddings",
+        "/v1beta/models/text-embedding-004:embedContent",
+        "/v1beta/models/text-embedding-004:batchEmbedContents",
+    ],
+)
+def test_embedding_requests_never_stand_in_for_generation_prompt(path):
+    embedding = _record(path, {"model": "embedding", "input": "large auxiliary input " * 1000})
+    with pytest.raises(ValueError, match="no prompt-bearing"):
+        snapshot_from_records([embedding])
+    body = {
+        "model": "chat",
+        "messages": [{"role": "system", "content": "Native system"}, {"role": "user", "content": "Task"}],
+    }
+    generation = _record("/v1/chat/completions", body)
+    snapshot = snapshot_from_records([embedding, generation])
+    assert snapshot.raw_request_body == body
+    assert snapshot.system_prompt == "Native system"

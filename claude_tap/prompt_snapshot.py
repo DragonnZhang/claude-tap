@@ -49,6 +49,10 @@ def snapshot_from_records(records: list[dict[str, Any]]) -> PromptSnapshot:
 
     candidates: list[tuple[int, dict[str, Any]]] = []
     for record in records:
+        request = record.get("request") if isinstance(record.get("request"), dict) else {}
+        path = str(request.get("path") or "").split("?", 1)[0].rstrip("/")
+        if path.endswith(("/embeddings", "/embed", ":embedContent", ":batchEmbedContents")):
+            continue
         body = _request_body(record)
         if not body:
             continue
