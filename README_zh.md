@@ -63,6 +63,11 @@ claude-tap kimi-code -- --prompt "Say hi"
 
 表格里的 client 名都可以这样传。`--` 后面的参数会原样传给对应 CLI。
 
+表格外的可执行程序也可通过 `claude-tap run <可执行程序> -- <参数>` 启动。通用客户端使用正向代理，
+识别原生 Anthropic Messages、OpenAI Chat Completions / Responses 和 Gemini 内容生成接口；
+`--export-prompt` 会按对应协议返回本地模拟响应。其他路径仍按原始透传方式记录。
+自定义网关前缀和非模型启动请求可能仍需专门的客户端配置。
+
 CLI 退出后，会输出类似这些文件：
 
 ```text

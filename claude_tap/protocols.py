@@ -434,7 +434,12 @@ def names() -> list[str]:
 
 
 def select_for_path(path: str, protocols: tuple[Protocol, ...]) -> Protocol | None:
-    """Pick the first protocol whose ``allowed_paths`` matches ``path``."""
+    """Prefer explicit Google generation verbs, then the first matching protocol."""
+    verb = path.split("?", 1)[0].rsplit(":", 1)[-1]
+    if verb in ("generateContent", "streamGenerateContent"):
+        for protocol in protocols:
+            if protocol.name == "gemini" and protocol.matches(path):
+                return protocol
     for p in protocols:
         if p.matches(path):
             return p

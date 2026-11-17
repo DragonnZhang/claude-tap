@@ -68,6 +68,12 @@ claude-tap kimi-code -- --prompt "Say hi"
 Use any client name from the support table below. Arguments after `--` are
 passed to that CLI unchanged.
 
+An executable that is not in the table can be launched with `claude-tap run <executable> -- <args>`.
+Generic clients use forward capture and recognize native Anthropic Messages, OpenAI Chat Completions / Responses,
+and Gemini content-generation endpoints, including protocol-correct dummy replies with `--export-prompt`.
+Other paths retain raw passthrough capture. Arbitrary gateway prefixes and non-model startup calls may still need
+a dedicated client configuration.
+
 After the CLI exits, `claude-tap` prints paths like:
 
 ```text
