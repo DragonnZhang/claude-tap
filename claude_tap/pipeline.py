@@ -11,8 +11,10 @@ to the protocol whose ``allowed_paths`` matches.
 
 from __future__ import annotations
 
+import base64
 import gzip
 import json
+import struct
 import zlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -114,8 +116,90 @@ def reassemble_event_stream_body(protocol: Protocol, body: bytes) -> tuple[objec
     return snapshot, reassembler.events
 
 
+def _schema_placeholder(schema: dict, root: dict, depth: int = 0) -> object:
+    if depth > 12 or not isinstance(schema, dict):
+        return None
+    if "$ref" in schema:
+        reference = schema["$ref"]
+        if not reference.startswith("#/"):
+            return None
+        target = root
+        for part in reference[2:].split("/"):
+            target = target.get(part.replace("~1", "/").replace("~0", "~"), {})
+        return _schema_placeholder(target, root, depth + 1)
+    if "const" in schema:
+        return schema["const"]
+    if schema.get("enum"):
+        return schema["enum"][0]
+    alternatives = schema.get("anyOf") or schema.get("oneOf")
+    if alternatives:
+        return _schema_placeholder(alternatives[0], root, depth + 1)
+    kind = schema.get("type")
+    if isinstance(kind, list):
+        kind = kind[0] if kind else None
+    if kind == "object" or "properties" in schema:
+        properties = schema.get("properties", {})
+        return {
+            key: _schema_placeholder(properties.get(key, {}), root, depth + 1) for key in schema.get("required", [])
+        }
+    if kind == "array":
+        return [
+            _schema_placeholder(schema.get("items", {}), root, depth + 1)
+            for _ in range(min(schema.get("minItems", 0), 16))
+        ]
+    if kind == "string":
+        return "captured"
+    if kind in ("integer", "number"):
+        return schema.get("minimum", 0)
+    if kind == "boolean":
+        return False
+    return None
+
+
+def _capture_text(body: object) -> str:
+    if not isinstance(body, dict):
+        return "captured"
+    response_format = body.get("response_format") or (body.get("text") or {}).get("format") or {}
+    if response_format.get("type") == "json_object":
+        return "{}"
+    if response_format.get("type") == "json_schema":
+        schema = (response_format.get("json_schema") or response_format).get("schema", {})
+        return json.dumps(_schema_placeholder(schema, schema), separators=(",", ":"))
+    return "captured"
+
+
 def capture_only_response(protocol: Protocol, path: str, req_body: object) -> dict:
     model = req_body.get("model", "claude-tap-capture") if isinstance(req_body, dict) else "claude-tap-capture"
+    text = _capture_text(req_body)
+    if protocol.name == "openai" and path.split("?", 1)[0].rstrip("/").endswith("/embeddings"):
+        body = req_body if isinstance(req_body, dict) else {}
+        inputs = body.get("input", "")
+        count = len(inputs) if isinstance(inputs, list) and (not inputs or not isinstance(inputs[0], int)) else 1
+        dimensions = body.get("dimensions", 3)
+        dimensions = dimensions if isinstance(dimensions, int) and 1 <= dimensions <= 8192 else 3
+        vector = [1.0] + [0.0] * (dimensions - 1)
+        if body.get("encoding_format") == "base64":
+            vector = base64.b64encode(struct.pack(f"<{dimensions}f", *vector)).decode()
+        return {
+            "object": "list",
+            "model": model,
+            "data": [{"object": "embedding", "index": i, "embedding": vector} for i in range(count)],
+            "usage": {"prompt_tokens": 0, "total_tokens": 0},
+        }
+    if protocol.name == "ollama":
+        return {
+            "model": model,
+            "created_at": "2000-01-01T00:00:00Z",
+            **(
+                {"response": "captured"}
+                if path.split("?", 1)[0].rstrip("/") == "/api/generate"
+                else {"message": {"role": "assistant", "content": "captured"}}
+            ),
+            "done": True,
+            "done_reason": "stop",
+            "prompt_eval_count": 0,
+            "eval_count": 0,
+        }
     if protocol.name == "openai" and path.split("?", 1)[0].rstrip("/").endswith("/models"):
         return {
             "object": "list",
@@ -157,7 +241,7 @@ def capture_only_response(protocol: Protocol, path: str, req_body: object) -> di
             "object": "chat.completion",
             "created": 0,
             "model": model,
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": "captured"}, "finish_reason": "stop"}],
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
     return {
@@ -172,7 +256,7 @@ def capture_only_response(protocol: Protocol, path: str, req_body: object) -> di
                 "id": "msg_claude_tap_capture",
                 "status": "completed",
                 "role": "assistant",
-                "content": [{"type": "output_text", "text": "captured", "annotations": []}],
+                "content": [{"type": "output_text", "text": text, "annotations": []}],
             }
         ],
         "usage": {
@@ -189,6 +273,8 @@ def capture_only_stream_response(
     protocol: Protocol, path: str, req_body: object
 ) -> tuple[dict, list[dict], bytes] | None:
     resp_body = capture_only_response(protocol, path, req_body)
+    if protocol.name == "ollama":
+        return resp_body, [{"event": "message", "data": resp_body}], json.dumps(resp_body).encode() + b"\n"
     if protocol.name == "anthropic":
         model = resp_body.get("model", "claude-tap-capture")
         events = [
@@ -294,7 +380,13 @@ def capture_only_stream_response(
                 "object": "chat.completion.chunk",
                 "created": 0,
                 "model": model,
-                "choices": [{"index": 0, "delta": {"role": "assistant", "content": "captured"}, "finish_reason": None}],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": resp_body["choices"][0]["message"]["content"]},
+                        "finish_reason": None,
+                    }
+                ],
             },
             {
                 "id": chunk_id,
@@ -332,7 +424,7 @@ def capture_only_stream_response(
                     "item_id": "msg_claude_tap_capture",
                     "output_index": 0,
                     "content_index": 0,
-                    "delta": "captured",
+                    "delta": output_item["content"][0]["text"],
                 },
             },
             {

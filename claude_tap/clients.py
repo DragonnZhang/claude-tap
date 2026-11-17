@@ -31,6 +31,7 @@ from claude_tap.protocols import (
     ANTIGRAVITY,
     CODEX_APP,
     GEMINI,
+    OLLAMA,
     OPENAI,
     PASSTHROUGH,
     Protocol,
@@ -1756,15 +1757,16 @@ def generic(cmd: str) -> Client:
     We can't know how ``cmd`` configures its upstream, so we run in forward
     mode: ``env_redirect_reliable=False`` makes ``resolve_target_and_mode`` pick
     ``forward``, which injects standard ``HTTPS_PROXY`` + CA-trust env vars and
-    captures whatever the tool talks to via TLS-MITM. PASSTHROUGH accepts every
-    path but produces no structured snapshot (raw sse_events / ws_events only).
+    captures whatever the tool talks to via TLS-MITM. Native API paths use
+    their protocol decoders and capture-only responses; PASSTHROUGH remains
+    the fallback for other paths.
     """
     return Client(
         name=cmd,
         cmd=cmd,
         label=cmd,
         install_url="",
-        protocols=(PASSTHROUGH,),
+        protocols=(ANTHROPIC, OPENAI, GEMINI, OLLAMA, PASSTHROUGH),
         env_redirect_reliable=False,
     )
 

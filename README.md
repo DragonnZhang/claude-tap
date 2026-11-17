@@ -68,6 +68,21 @@ claude-tap kimi-code -- --prompt "Say hi"
 Use any client name from the support table below. Arguments after `--` are
 passed to that CLI unchanged.
 
+An executable that is not in the table can be launched with `claude-tap run <executable> -- <args>`.
+Generic clients use forward capture and recognize native Anthropic Messages, OpenAI Chat Completions / Responses,
+Gemini content-generation endpoints, and native Ollama `/api/chat` and `/api/generate`, including protocol-correct dummy replies with `--export-prompt`.
+Capture-only OpenAI embeddings return synthetic vectors, and structured JSON replies use placeholders for common schema types, required fields, references and enums. These permit native startup probes without provider calls; they are not model results or a complete JSON Schema validator.
+Ollama supports JSON and NDJSON streaming, prompt/tool export, and response reassembly
+that preserves thinking, tool calls, usage and incomplete-stream evidence. See the
+[official Ollama API reference](https://github.com/ollama/ollama/blob/main/docs/api.md).
+Embedding and token-counting calls remain raw trace evidence and are excluded
+from generation prompt snapshots; auxiliary traffic alone cannot export a prompt.
+Capture-only mode rejects WebSocket upgrades locally with HTTP 426 before opening
+any upstream connection. Clients with a native HTTP fallback can then emit their
+ordinary HTTP request; clients without one require an explicit HTTP transport.
+Other paths retain raw passthrough capture. Arbitrary gateway prefixes and non-model startup calls may still need
+a dedicated client configuration.
+
 After the CLI exits, `claude-tap` prints paths like:
 
 ```text

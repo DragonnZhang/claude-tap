@@ -87,13 +87,18 @@ def test_registry_get_unknown_raises():
         clients.get("does-not-exist")
 
 
-def test_generic_builds_forward_passthrough_client():
-    from claude_tap.protocols import PASSTHROUGH
+def test_generic_uses_native_protocols_before_forward_passthrough():
+    from claude_tap.protocols import ANTHROPIC, GEMINI, OLLAMA, OPENAI, PASSTHROUGH, select_for_path
 
     c = clients.generic("tracecli")
     assert c.name == "tracecli"
     assert c.cmd == "tracecli"
-    assert c.protocols == (PASSTHROUGH,)
+    assert c.protocols == (ANTHROPIC, OPENAI, GEMINI, OLLAMA, PASSTHROUGH)
+    assert select_for_path("/v1/messages", c.protocols) is ANTHROPIC
+    assert select_for_path("/v1/chat/completions", c.protocols) is OPENAI
+    assert select_for_path("/v1beta/models/test:generateContent", c.protocols) is GEMINI
+    assert select_for_path("/api/chat", c.protocols) is OLLAMA
+    assert select_for_path("/rpc/custom", c.protocols) is PASSTHROUGH
     # env_redirect_reliable=False → resolve_target_and_mode picks forward mode.
     assert c.env_redirect_reliable is False
     # No built-in redirect knowledge for an unknown CLI.

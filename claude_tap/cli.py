@@ -238,7 +238,7 @@ def _build_run_parser(sub: argparse._SubParsersAction) -> None:
         help=(
             "which client to launch (default: claude). Built-in: "
             f"{', '.join(clients_mod.names())}. Any other name runs that command "
-            "in generic forward-proxy mode (passthrough capture)."
+            "in generic forward-proxy mode with native HTTP protocol detection."
         ),
     )
     # Yolo (auto-approve all actions) is on by default. Each client
@@ -417,7 +417,7 @@ async def _run_pipeline_async(args: argparse.Namespace, *, launch_client: bool) 
         if client_name not in clients_mod.names():
             sys.stdout.write(
                 f"[claude-tap] '{client_name}' is not a built-in client; running in generic "
-                "forward-proxy mode (passthrough capture, no structured snapshot)\n"
+                "forward-proxy mode with native HTTP protocol detection\n"
             )
         protocols = client.protocols
         # For target auto-detection: ask the client.

@@ -226,6 +226,8 @@ def extract_metadata(record_json: str) -> dict | None:
 
     usage = resp_body.get("usage") if isinstance(resp_body, dict) else None
     usage = usage or {}
+    if not usage and any(key in resp_body for key in ("prompt_eval_count", "eval_count")):
+        usage = {"input_tokens": resp_body.get("prompt_eval_count", 0), "output_tokens": resp_body.get("eval_count", 0)}
     if not usage:
         for ev in reversed(stream_events):
             if _event_type(ev) != "response.completed":
@@ -262,6 +264,20 @@ def extract_metadata(record_json: str) -> dict | None:
                 response_tool_names.append(block.get("name", ""))
     elif isinstance(resp_body, dict):
         response_tool_names.extend(_extract_response_tool_names(resp_body.get("output") or []))
+    chat_messages = [resp_body.get("message")]
+    choices = resp_body.get("choices")
+    if isinstance(choices, list):
+        chat_messages.extend(choice.get("message") for choice in choices if isinstance(choice, dict))
+    for message in chat_messages:
+        if not isinstance(message, dict):
+            continue
+        calls = message.get("tool_calls")
+        if not isinstance(calls, list):
+            continue
+        for call in calls:
+            function = call.get("function") if isinstance(call, dict) else None
+            if isinstance(function, dict) and function.get("name"):
+                response_tool_names.append(function["name"])
     if not response_tool_names:
         for ev in reversed(stream_events):
             if _event_type(ev) != "response.completed":
@@ -288,6 +304,8 @@ def extract_metadata(record_json: str) -> dict | None:
         err = resp_body.get("error")
         if isinstance(err, dict):
             error_msg = err.get("message", "")
+        elif isinstance(err, str):
+            error_msg = err
 
     return {
         "turn": r.get("turn"),
@@ -299,8 +317,10 @@ def extract_metadata(record_json: str) -> dict | None:
         "model": body.get("model", "") if isinstance(body, dict) else "",
         "status": resp.get("status", 0),
         "error_message": error_msg,
-        "input_tokens": usage.get("input_tokens", 0) if isinstance(usage, dict) else 0,
-        "output_tokens": usage.get("output_tokens", 0) if isinstance(usage, dict) else 0,
+        "input_tokens": usage.get("input_tokens", usage.get("prompt_tokens", 0)) if isinstance(usage, dict) else 0,
+        "output_tokens": usage.get("output_tokens", usage.get("completion_tokens", 0))
+        if isinstance(usage, dict)
+        else 0,
         "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0) if isinstance(usage, dict) else 0,
         "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0) if isinstance(usage, dict) else 0,
         "has_system": bool(sys_text),

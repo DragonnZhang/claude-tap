@@ -49,6 +49,23 @@ def snapshot_from_records(records: list[dict[str, Any]]) -> PromptSnapshot:
 
     candidates: list[tuple[int, dict[str, Any]]] = []
     for record in records:
+        request = record.get("request") if isinstance(record.get("request"), dict) else {}
+        path = str(request.get("path") or "").split("?", 1)[0].rstrip("/")
+        if path.endswith(
+            (
+                "/embeddings",
+                "/embed",
+                ":embedContent",
+                ":batchEmbedContents",
+                "/count_tokens",
+                ":countTokens",
+                ":computeTokens",
+                "/input_tokens",
+                "/tokenize",
+                "/detokenize",
+            )
+        ):
+            continue
         body = _request_body(record)
         if not body:
             continue
@@ -66,6 +83,8 @@ def snapshot_from_records(records: list[dict[str, Any]]) -> PromptSnapshot:
         return _anthropic_snapshot(record)
     if provider == "openai":
         return _openai_snapshot(record)
+    if provider == "ollama":
+        return _openai_snapshot(record, provider="ollama")
     if provider == "gemini":
         return _gemini_snapshot(record)
     if provider == "qoder":
@@ -82,6 +101,8 @@ def infer_provider(record: dict[str, Any]) -> str:
 
     if path == "/__claude_tap/qoder/prompt":
         return "qoder"
+    if path.rstrip("/") in ("/api/chat", "/api/generate"):
+        return "ollama"
     if path.startswith("/v1/messages") or path.startswith("/v1/complete"):
         return "anthropic"
     if path.startswith("/v1/responses") or path.startswith("/responses"):
@@ -177,13 +198,13 @@ def _anthropic_snapshot(record: dict[str, Any]) -> PromptSnapshot:
     )
 
 
-def _openai_snapshot(record: dict[str, Any]) -> PromptSnapshot:
+def _openai_snapshot(record: dict[str, Any], *, provider: str = "openai") -> PromptSnapshot:
     body = _request_body(record)
-    system_prompt, developer_prompt, user_message = _prompt_text_for_provider("openai", body)
+    system_prompt, developer_prompt, user_message = _prompt_text_for_provider(provider, body)
     tools = tuple(_openai_body_tools(body))
     return _base_snapshot(
         record,
-        provider="openai",
+        provider=provider,
         model=str(body.get("model") or ""),
         system_prompt=system_prompt,
         developer_prompt=developer_prompt,
@@ -298,7 +319,7 @@ def _looks_like_gemini_body(body: dict[str, Any]) -> bool:
 def _tools_for_provider(provider: str, body: dict[str, Any]) -> list[PromptTool]:
     if provider == "anthropic":
         return _anthropic_tools(body.get("tools"))
-    if provider == "openai":
+    if provider in ("openai", "ollama"):
         return _openai_body_tools(body)
     if provider == "gemini":
         return _gemini_tools(body.get("tools"))
@@ -308,9 +329,11 @@ def _tools_for_provider(provider: str, body: dict[str, Any]) -> list[PromptTool]
 
 
 def _prompt_text_for_provider(provider: str, body: dict[str, Any]) -> tuple[str, str, str]:
+    if provider == "ollama" and "prompt" in body:
+        return str(body.get("system") or ""), "", str(body.get("prompt") or "")
     if provider == "anthropic":
         return (_anthropic_system_text(body.get("system")), "", _messages_text(body.get("messages"), {"user"}))
-    if provider == "openai":
+    if provider in ("openai", "ollama"):
         input_value = body.get("input")
         messages = body.get("messages")
         developer = _join_text(

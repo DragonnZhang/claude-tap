@@ -268,6 +268,16 @@ class ForwardProxyServer:
         protocol: Protocol,
     ) -> None:
         ctx = self._ctx
+        if ctx.capture_only and any(
+            key.lower() == "upgrade" and value.lower() == "websocket" for key, value in headers.items()
+        ):
+            body_bytes = b"WebSocket capture-only is unsupported; use HTTP fallback."
+            client_writer.write(b"HTTP/1.1 426 Upgrade Required\r\n")
+            client_writer.write(b"Content-Type: text/plain\r\n")
+            client_writer.write(f"Content-Length: {len(body_bytes)}\r\n\r\n".encode())
+            client_writer.write(body_bytes)
+            await client_writer.drain()
+            return
         request_id = f"req_{uuid.uuid4().hex[:12]}"
         t0 = time.monotonic()
         should_capture = protocol.captures(method, path)
@@ -299,7 +309,7 @@ class ForwardProxyServer:
             stream_response = capture_only_stream_response(protocol, path, req_body) if streaming else None
             if stream_response:
                 resp_body, sse_events, body_bytes = stream_response
-                resp_headers = {"Content-Type": "text/event-stream"}
+                resp_headers = {"Content-Type": protocol.stream_content_type}
             else:
                 resp_body = capture_only_response(protocol, path, req_body)
                 sse_events = None
@@ -459,7 +469,7 @@ class ForwardProxyServer:
             duration_ms = int((time.monotonic() - t0) * 1000)
             decoded = maybe_decompress(body, upstream.headers.get("Content-Encoding", ""))
             content_type = upstream.headers.get("Content-Type", "")
-            if "text/event-stream" in content_type.lower():
+            if protocol.stream_content_type in content_type.lower():
                 resp_body, sse_events = reassemble_event_stream_body(protocol, decoded)
             else:
                 resp_body = parse_json_body(decoded)

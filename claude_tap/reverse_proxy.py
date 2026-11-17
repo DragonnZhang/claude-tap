@@ -117,7 +117,7 @@ async def _handle_http(
         stream_response = capture_only_stream_response(protocol, request.path_qs, req_body) if streaming else None
         if stream_response:
             resp_body, sse_events, body_bytes = stream_response
-            resp_headers = {"Content-Type": "text/event-stream"}
+            resp_headers = {"Content-Type": protocol.stream_content_type}
         else:
             resp_body = capture_only_response(protocol, request.path_qs, req_body)
             sse_events = None
@@ -141,7 +141,7 @@ async def _handle_http(
         await ctx.bus.publish(record)
         log.info("[Turn %d] capture-only response returned; upstream skipped", turn)
         if stream_response:
-            return web.Response(body=body_bytes, content_type="text/event-stream")
+            return web.Response(body=body_bytes, content_type=protocol.stream_content_type)
         return web.json_response(resp_body)
 
     try:
@@ -247,7 +247,7 @@ async def _proxy_buffered(
         duration_ms = int((time.monotonic() - t0) * 1000)
         decoded = maybe_decompress(resp_bytes, upstream_resp.headers.get("Content-Encoding", ""))
         content_type = upstream_resp.headers.get("Content-Type", "")
-        if "text/event-stream" in content_type.lower():
+        if protocol.stream_content_type in content_type.lower():
             resp_body, sse_events = reassemble_event_stream_body(protocol, decoded)
         else:
             resp_body = parse_json_body(decoded)
@@ -299,6 +299,8 @@ async def _handle_websocket(
     ctx: ProxyContext,
     protocol: Protocol,
 ) -> web.StreamResponse:
+    if ctx.capture_only:
+        return web.Response(status=426, text="WebSocket capture-only is unsupported; use HTTP fallback.")
     upstream_http = build_upstream_url(ctx.target, request.path_qs, protocol)
     if upstream_http.startswith("https://"):
         upstream_ws = "wss://" + upstream_http[8:]
