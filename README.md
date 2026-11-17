@@ -74,6 +74,8 @@ Gemini content-generation endpoints, and native Ollama `/api/chat` and `/api/gen
 Ollama supports JSON and NDJSON streaming, prompt/tool export, and response reassembly
 that preserves thinking, tool calls, usage and incomplete-stream evidence. See the
 [official Ollama API reference](https://github.com/ollama/ollama/blob/main/docs/api.md).
+Embedding and token-counting calls remain raw trace evidence and are excluded
+from generation prompt snapshots; auxiliary traffic alone cannot export a prompt.
 Capture-only mode rejects WebSocket upgrades locally with HTTP 426 before opening
 any upstream connection. Clients with a native HTTP fallback can then emit their
 ordinary HTTP request; clients without one require an explicit HTTP transport.

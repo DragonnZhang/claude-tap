@@ -68,6 +68,7 @@ claude-tap kimi-code -- --prompt "Say hi"
 `--export-prompt` 会按对应协议返回本地模拟响应。其他路径仍按原始透传方式记录。
 Ollama 支持 JSON 和 NDJSON 流式响应、提示词/工具导出，并保留思考、工具调用、用量及未完成流的证据。
 协议格式见 [Ollama 官方 API 文档](https://github.com/ollama/ollama/blob/main/docs/api.md)。
+Embedding、token 计数等辅助请求保留在原始 trace 中，不作为生成提示词导出；只有辅助请求时不会生成提示词快照。
 仅采集模式会在本地以 HTTP 426 拒绝 WebSocket 升级，不建立上游连接。
 支持原生 HTTP 回退的客户端随后可发送普通 HTTP 请求；其他客户端需显式配置 HTTP 传输。
 自定义网关前缀和非模型启动请求可能仍需专门的客户端配置。
