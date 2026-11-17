@@ -116,6 +116,16 @@ def reassemble_event_stream_body(protocol: Protocol, body: bytes) -> tuple[objec
 
 def capture_only_response(protocol: Protocol, path: str, req_body: object) -> dict:
     model = req_body.get("model", "claude-tap-capture") if isinstance(req_body, dict) else "claude-tap-capture"
+    if protocol.name == "ollama":
+        return {
+            "model": model,
+            "created_at": "2000-01-01T00:00:00Z",
+            "message": {"role": "assistant", "content": "captured"},
+            "done": True,
+            "done_reason": "stop",
+            "prompt_eval_count": 0,
+            "eval_count": 0,
+        }
     if protocol.name == "openai" and path.split("?", 1)[0].rstrip("/").endswith("/models"):
         return {
             "object": "list",
@@ -189,6 +199,8 @@ def capture_only_stream_response(
     protocol: Protocol, path: str, req_body: object
 ) -> tuple[dict, list[dict], bytes] | None:
     resp_body = capture_only_response(protocol, path, req_body)
+    if protocol.name == "ollama":
+        return resp_body, [{"event": "message", "data": resp_body}], json.dumps(resp_body).encode() + b"\n"
     if protocol.name == "anthropic":
         model = resp_body.get("model", "claude-tap-capture")
         events = [

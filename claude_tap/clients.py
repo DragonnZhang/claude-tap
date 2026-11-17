@@ -31,6 +31,7 @@ from claude_tap.protocols import (
     ANTIGRAVITY,
     CODEX_APP,
     GEMINI,
+    OLLAMA,
     OPENAI,
     PASSTHROUGH,
     Protocol,
@@ -1765,7 +1766,7 @@ def generic(cmd: str) -> Client:
         cmd=cmd,
         label=cmd,
         install_url="",
-        protocols=(ANTHROPIC, OPENAI, GEMINI, PASSTHROUGH),
+        protocols=(ANTHROPIC, OPENAI, GEMINI, OLLAMA, PASSTHROUGH),
         env_redirect_reliable=False,
     )
 

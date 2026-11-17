@@ -10,7 +10,7 @@ from claude_tap.protocols import ANTHROPIC, ANTIGRAVITY, CODEX_APP, GEMINI, OPEN
 
 def test_registry_has_known_protocols():
     names = protocols.names()
-    assert names == ["anthropic", "antigravity", "codexapp", "gemini", "openai", "passthrough", "qoder"]
+    assert names == ["anthropic", "antigravity", "codexapp", "gemini", "ollama", "openai", "passthrough", "qoder"]
 
 
 def test_registry_get_unknown_raises():

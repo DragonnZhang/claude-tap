@@ -309,7 +309,7 @@ class ForwardProxyServer:
             stream_response = capture_only_stream_response(protocol, path, req_body) if streaming else None
             if stream_response:
                 resp_body, sse_events, body_bytes = stream_response
-                resp_headers = {"Content-Type": "text/event-stream"}
+                resp_headers = {"Content-Type": protocol.stream_content_type}
             else:
                 resp_body = capture_only_response(protocol, path, req_body)
                 sse_events = None
@@ -469,7 +469,7 @@ class ForwardProxyServer:
             duration_ms = int((time.monotonic() - t0) * 1000)
             decoded = maybe_decompress(body, upstream.headers.get("Content-Encoding", ""))
             content_type = upstream.headers.get("Content-Type", "")
-            if "text/event-stream" in content_type.lower():
+            if protocol.stream_content_type in content_type.lower():
                 resp_body, sse_events = reassemble_event_stream_body(protocol, decoded)
             else:
                 resp_body = parse_json_body(decoded)

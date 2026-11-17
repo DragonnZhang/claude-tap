@@ -8,7 +8,7 @@ prompt surface rather than the full traffic trace.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from claude_tap.tool_normalization import expand_tool_namespaces
@@ -66,6 +66,8 @@ def snapshot_from_records(records: list[dict[str, Any]]) -> PromptSnapshot:
         return _anthropic_snapshot(record)
     if provider == "openai":
         return _openai_snapshot(record)
+    if provider == "ollama":
+        return replace(_openai_snapshot(record), provider="ollama")
     if provider == "gemini":
         return _gemini_snapshot(record)
     if provider == "qoder":
@@ -82,6 +84,8 @@ def infer_provider(record: dict[str, Any]) -> str:
 
     if path == "/__claude_tap/qoder/prompt":
         return "qoder"
+    if path.rstrip("/") == "/api/chat":
+        return "ollama"
     if path.startswith("/v1/messages") or path.startswith("/v1/complete"):
         return "anthropic"
     if path.startswith("/v1/responses") or path.startswith("/responses"):
@@ -298,7 +302,7 @@ def _looks_like_gemini_body(body: dict[str, Any]) -> bool:
 def _tools_for_provider(provider: str, body: dict[str, Any]) -> list[PromptTool]:
     if provider == "anthropic":
         return _anthropic_tools(body.get("tools"))
-    if provider == "openai":
+    if provider in ("openai", "ollama"):
         return _openai_body_tools(body)
     if provider == "gemini":
         return _gemini_tools(body.get("tools"))
@@ -310,7 +314,7 @@ def _tools_for_provider(provider: str, body: dict[str, Any]) -> list[PromptTool]
 def _prompt_text_for_provider(provider: str, body: dict[str, Any]) -> tuple[str, str, str]:
     if provider == "anthropic":
         return (_anthropic_system_text(body.get("system")), "", _messages_text(body.get("messages"), {"user"}))
-    if provider == "openai":
+    if provider in ("openai", "ollama"):
         input_value = body.get("input")
         messages = body.get("messages")
         developer = _join_text(

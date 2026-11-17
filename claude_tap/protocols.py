@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from claude_tap.ndjson import OllamaReassembler
 from claude_tap.sse import (
     AnthropicReassembler,
     GeminiReassembler,
@@ -69,13 +70,14 @@ class Protocol:
     # Streaming detection — most protocols use ``body.stream``; Gemini uses
     # the URL verb instead, so we override per-protocol.
     is_streaming: Callable[[str, object], bool] = field(default=_default_is_streaming)
+    stream_content_type: str = "text/event-stream"
 
     # Per-protocol path rewrite. Used by Codex OAuth where the configured
     # target ``https://chatgpt.com/backend-api/codex`` does NOT accept the
     # ``/v1`` prefix the client emits. Default: identity.
     rewrite_upstream_path: Callable[[str, str], str] = field(default=_default_path_rewrite)
 
-    # SSE/WS event accumulator.
+    # SSE/NDJSON/WS event accumulator.
     make_reassembler: Callable[[], StreamReassembler] = field(default=AnthropicReassembler)
 
     # Token-usage extractor for the reassembled response.body.
@@ -346,6 +348,20 @@ OPENAI = Protocol(
 )
 
 
+OLLAMA = Protocol(
+    name="ollama",
+    default_target="http://localhost:11434",
+    allowed_paths=("/api/chat",),
+    capture_methods=("POST",),
+    is_streaming=lambda path, body: not isinstance(body, dict) or body.get("stream", True) is not False,
+    stream_content_type="application/x-ndjson",
+    make_reassembler=OllamaReassembler,
+    extract_usage=lambda body: Usage(
+        input_tokens=body.get("prompt_eval_count", 0) or 0, output_tokens=body.get("eval_count", 0) or 0
+    ),
+)
+
+
 GEMINI = Protocol(
     name="gemini",
     default_target="https://generativelanguage.googleapis.com",
@@ -419,7 +435,7 @@ PASSTHROUGH = Protocol(
 
 
 _REGISTRY: dict[str, Protocol] = {
-    p.name: p for p in (ANTHROPIC, ANTIGRAVITY, CODEX_APP, OPENAI, GEMINI, QODER, PASSTHROUGH)
+    p.name: p for p in (ANTHROPIC, ANTIGRAVITY, CODEX_APP, OPENAI, GEMINI, OLLAMA, QODER, PASSTHROUGH)
 }
 
 
